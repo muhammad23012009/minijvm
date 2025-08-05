@@ -17,17 +17,37 @@
 
 #include "builtins.h"
 
-/* Arguments: Reference to Java String
+/* Arguments: Any (parsed automatically)
  * Returns: Void
 */
-void java_io_PrintStream_println(Method *method, Frame *frame)
+void java_io_PrintStream_println(Method *method, Frame *frame, char *descriptor_str)
 {
-    char *str = stack_pop(frame->stack)->data.ref;
-    Class *printstream = stack_pop(frame->stack)->data.ref;
-    printf("%s\n", str);
+    /* We do not have any descriptors. Parse them ourselves */
+    Descriptors *descriptors = descriptors_new(descriptor_str);
+
+    Class *printstream = frame->locals->items[0].data.ref;
+
+    /* Figure out what values we need to print */
+    for (int i = 0; i < descriptors->arguments_count; i++) {
+        Variant item = frame->locals->items[i + 1];
+        Descriptor desc = descriptors->arguments[i];
+        switch (desc.type) {
+            case DESCRIPTOR_INT:
+                printf("%d\n", item.data.int_val);
+                break;
+            case DESCRIPTOR_OBJECT:
+                /* Probably a string? */
+                printf("%s\n", item.data.ref);
+                break;
+            default:
+                printf("FUCK!\n");
+        }
+    }
+
+    descriptors_free(descriptors);
 }
 
 builtins java_io_PrintStream_methods[] = {
-    { "println", &java_io_PrintStream_println },
+    { "println", "", &java_io_PrintStream_println },
 };
 int java_io_PrintStream_methods_length = ARRAY_SIZE(java_io_PrintStream_methods);

@@ -15,37 +15,71 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "stack.h"
+#include "minijvm.h"
 #include <stdio.h>
 
-void stack_push(Stack *stack, StackType type, StackData data)
+void stack_push(Stack *stack, Variant value)
 {
-    StackItem item;
-    item.type = type;
-    item.data = data;
-    stack->items[stack->top++] = item;
+    if (stack->top + 1 > stack->max_size) {
+        printf("stack_push: overflowed!!!\n");
+        printf("max size is %d, count is %d, top is %d\n", stack->max_size, stack->count, stack->top);
+        return;
+    }
+
+    //printf("pushing data to stack with type %d\n", value.type);
+    stack->items[stack->top++] = value;
+}
+
+void stack_push_int(Stack *stack, int value)
+{
+    Variant variant;
+    variant.type = VARIANT_TYPE_INT;
+    variant.data.int_val = value;
+    stack_push(stack, variant);
+}
+
+void stack_push_ref(Stack *stack, void *value)
+{
+    Variant variant;
+    variant.type = VARIANT_TYPE_REF;
+    variant.data.ref = value;
+    stack_push(stack, variant);
+}
+
+void stack_push_object(Stack *stack, Object *value)
+{
+    Variant variant;
+    variant.type = VARIANT_TYPE_OBJECT;
+    variant.data.object = value;
+    stack_push(stack, variant);
 }
 
 /* Takes the top item, and duplicates it */
 void stack_dup(Stack *stack)
 {
-    stack_push(stack, stack->items[stack->top].type, stack->items[stack->top].data);
+    stack_push(stack, stack->items[stack->top - 1]);
 }
 
-StackItem *stack_pop(Stack *stack)
+Variant stack_pop(Stack *stack)
 {
+    Variant empty;
     if (stack->top <= 0)
-        return NULL;
+        return empty;
 
-    return &stack->items[--stack->top];
+    //printf("popped an item from stack!\n");
+    stack->top--;
+    stack->count--;
+    return stack->items[stack->top];
 }
 
 Stack *stack_new(int max_size)
 {
     Stack *stack = malloc(sizeof(Stack));
-    stack->size = max_size;
+    stack->max_size = max_size;
     /* The stack will hold at most `max_size` items */
-    stack->items = malloc(sizeof(StackItem) * max_size);
+    stack->items = calloc(max_size, sizeof(Variant));
+    stack->top = 0;
+    stack->count = 0;
 }
 
 void stack_free(Stack *stack)

@@ -33,8 +33,12 @@
 #define CONSTANT_FIELDREF   0x09
 #define CONSTANT_METHODREF  0x0A
 #define CONSTANT_NAMEANDTYPE    0x0C
+#define CONSTANT_DYNAMIC_INFO   0x11
+#define CONSTANT_INVOKEDYNAMIC  0x12
 
 typedef struct Classes Classes;
+typedef struct Class Class;
+typedef struct Variant Variant;
 
 typedef struct ConstantPoolInfo {
     uint8_t tag;
@@ -50,6 +54,11 @@ typedef struct ConstantPoolInfo {
             uint32_t high_bytes;
             uint32_t low_bytes;
         } long_val;
+
+        struct {
+            uint16_t class_index;
+            uint16_t name_and_type_index;
+        } field_ref;
 
         struct {
             uint16_t class_index;
@@ -72,9 +81,6 @@ typedef struct ConstantPool {
     uint16_t count;
     /* Array of pool items */
     ConstantPoolInfo *pool;
-
-    /* All of the parsed classes */
-    Classes *classes;
 } ConstantPool;
 
 typedef struct Interface {
@@ -83,7 +89,14 @@ typedef struct Interface {
 } Interface;
 
 /* Helper functions */
+extern uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index);
 extern char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index);
+
+extern char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index);
+extern char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
+extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
+extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class *parent);
+
 extern ConstantPool *constant_pool_new(Reader *reader);
 extern void constant_pool_free(ConstantPool *pool);
 

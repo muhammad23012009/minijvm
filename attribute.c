@@ -30,7 +30,7 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
 {
     Attributes *attributes = malloc(sizeof(Attributes));
     attributes->count = reader_read_uint16_be(reader);
-    if (attributes->count < 0) {
+    if (attributes->count <= 0) {
         free(attributes);
         return NULL;
     }

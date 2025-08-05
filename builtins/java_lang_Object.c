@@ -19,15 +19,17 @@
 #include "../method.h"
 
 /* Arguments: None
- * Returns: Reference to PrintStream class
+ * Returns: Void
 */
-void java_lang_System_out(Method *method, Frame *frame, char *descriptor_str)
+void java_lang_Object_init(Method *method, Frame *frame, char *descriptor_str)
 {
-    Class *printstream = classes_get_class(method->class->classes, "java/io/PrintStream");
-    stack_push_ref(frame->stack, printstream);
+    Object *object = frame->locals->items[0].data.object;
+    object->initialized = true;
+
+    return;
 }
 
-builtins java_lang_System_methods[] = {
-    { "out", "()Ljava/io/PrintStream;", &java_lang_System_out },
+builtins java_lang_Object_methods[] = {
+    { "<init>", "()V", &java_lang_Object_init },
 };
-int java_lang_System_methods_length = ARRAY_SIZE(java_lang_System_methods);
+int java_lang_Object_methods_length = ARRAY_SIZE(java_lang_Object_methods);

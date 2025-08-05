@@ -23,14 +23,21 @@
 */
 
 #include <stdlib.h>
+#include <stdbool.h>
+#include "method.h"
 
 typedef struct Class Class;
+typedef struct Field Field;
 
 typedef struct Object {
     Class *class;
-    /* TODO: Add more? */
+    bool initialized;
+
+    uint16_t fields_count;
+    Field **fields;
 } Object;
 
+extern Field *object_get_field(Object *object, char *field_name);
 extern Object *object_new(Class *class);
 extern void object_free(Object *object);
 

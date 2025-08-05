@@ -19,34 +19,26 @@
 #define STACK_H
 
 #include <stdlib.h>
-#include "object.h"
+#include "variant.h"
 
-typedef union {
-    int int_val;
-    Object *object;
-    void *ref;
-} StackData;
-
-typedef enum {
-    STACK_ITEM_TYPE_INT,
-    STACK_ITEM_TYPE_OBJECT,
-    STACK_ITEM_TYPE_REF,
-} StackType;
-
-typedef struct StackItem {
-    StackType type;
-    StackData data;
-} StackItem;
+typedef struct Variant Variant;
+typedef struct Object Object;
 
 typedef struct Stack {
-    int size;
+    int max_size;
+    int count;
     int top;
-    StackItem *items;
+    Variant *items;
 } Stack;
 
-extern void stack_push(Stack *stack, StackType type, StackData data);
+extern void stack_push(Stack *stack, Variant value);
+
+extern void stack_push_int(Stack *stack, int value);
+extern void stack_push_ref(Stack *stack, void *value);
+extern void stack_push_object(Stack *stack, Object *value);
+
 extern void stack_dup(Stack *stack);
-extern StackItem *stack_pop(Stack *stack);
+extern Variant stack_pop(Stack *stack);
 
 extern Stack *stack_new(int max_size);
 extern void stack_free(Stack *stack);

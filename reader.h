@@ -25,7 +25,7 @@
 #include <endian.h>
 
 typedef struct Reader {
-    void *data;
+    char *data;
     int size;
     int offset;
 } Reader;

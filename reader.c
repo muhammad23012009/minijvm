@@ -75,6 +75,8 @@ Reader *reader_new(void *data, int size)
     reader->data = data;
     reader->size = size;
     reader->offset = 0;
+
+    return reader;
 }
 
 void reader_free(Reader *reader)

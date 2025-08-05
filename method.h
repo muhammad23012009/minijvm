@@ -24,14 +24,16 @@
 
 #include <stddef.h>
 #include <sys/stat.h>
-#include "attribute.h"
+#include "minijvm.h"
 #include "constantpool.h"
 #include "reader.h"
 #include "stack.h"
+#include "descriptor.h"
 
 typedef struct Attributes Attributes;
 typedef struct ConstantPool ConstantPool;
 typedef struct Method Method;
+typedef struct Variant Variant;
 
 typedef struct FieldInfo {
     uint16_t access_flags;
@@ -76,8 +78,10 @@ typedef struct Frame {
 extern Frame *frame_new(int max_stack, int max_local);
 extern void frame_free(Frame *frame);
 
-/* TODO: Figure out built-in methods and methods associated with classes */
-typedef void (*builtin_method)(Method *method, Frame *frame);
+/* descriptor_str is used to derive the arguments of the method in case 
+ * it doesn't have its own methods.
+*/
+typedef void (*builtin_method)(Method *method, Frame *frame, char *descriptor_str);
 
 typedef struct Method {
     struct Class *class;
@@ -88,9 +92,16 @@ typedef struct Method {
         uint8_t *data;
         builtin_method method;
     };
+    Descriptors *descriptors;
     int max_stack;
     int max_local;
 } Method;
+
+typedef struct Field {
+    struct Class *class;
+    char *name;
+    Variant value;
+} Field;
 
 typedef struct Class {
     struct Classes *classes;
@@ -111,7 +122,7 @@ typedef struct Class {
     Method **methods;
 
     /* These are not meant to be used by any functions except our own */
-    Fields *fields;
+    Fields *class_fields;
     Fields *method_fields;
     Attributes *attributes;
 } Class;
@@ -122,16 +133,16 @@ typedef struct Classes {
     Class *main_class;
 } Classes;
 
-extern Class *class_parse_file(char *filename);
+extern Class *class_parse_file(Classes *classes, char *filename);
 extern Class *class_create_builtin(char *name);
 extern void class_free(Class *class);
 
 extern void class_add_method(Class *class, FieldInfo method_info);
-extern void class_add_builtin_method(Class *class, char *name, builtin_method bmethod);
+extern void class_add_builtin_method(Class *class, char *name, char *descriptor_str, builtin_method bmethod);
 extern Method *class_get_method(Class *class, char *name);
 extern Method *class_get_method_from_index(Class *class, uint16_t index);
 
-extern void classes_add_class(Classes *classes, Class *class);
+extern bool classes_add_class(Classes *classes, Class *class);
 extern Class *classes_get_class(Classes *classes, char *name);
 extern Class *classes_get_class_from_index(Classes *classes, uint16_t index);
 

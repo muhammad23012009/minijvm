@@ -22,5 +22,6 @@
 #include "attribute.h"
 #include "constantpool.h"
 #include "method.h"
+#include "object.h"
 
 #endif
