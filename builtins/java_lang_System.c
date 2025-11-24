@@ -18,16 +18,25 @@
 #include "builtins.h"
 #include "../method.h"
 
-/* Arguments: None
- * Returns: Reference to PrintStream class
-*/
-void java_lang_System_out(Method *method, Frame *frame, char *descriptor_str)
+void java_lang_System_clinit(Method *method, Frame *frame)
 {
     Class *printstream = classes_get_class(method->class->classes, "java/io/PrintStream");
-    stack_push_ref(frame->stack, printstream);
+    Field *field = class_get_static_field(method->class, "out");
+    field->value.data.object = object_new(printstream);
 }
 
-builtins java_lang_System_methods[] = {
-    { "out", "()Ljava/io/PrintStream;", &java_lang_System_out },
+static builtin_fields fields[] = {
+    { "out", 0x0008 },
 };
-int java_lang_System_methods_length = ARRAY_SIZE(java_lang_System_methods);
+
+static builtin_methods methods[] = {
+    { "<clinit>", "()V", 0, &java_lang_System_clinit },
+};
+
+builtins java_lang_System_builtins = {
+    .parent = "java/lang/Object",
+    .fields = fields,
+    .fields_length = ARRAY_SIZE(fields),
+    .methods = methods,
+    .methods_length = ARRAY_SIZE(methods),
+};

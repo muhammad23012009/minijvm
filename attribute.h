@@ -31,6 +31,7 @@ typedef struct AttributeInfo {
         char *attribute;
     } attribute_info;
     uint32_t attribute_length;
+
     union {
         struct {
             uint16_t max_stack;
@@ -40,6 +41,15 @@ typedef struct AttributeInfo {
             // TODO: Parse exceptions and optional attributes
             struct Attributes *attributes;
         } CodeAttribute;
+
+        struct {
+            uint8_t num_bootstrap_methods;
+            struct {
+                uint8_t bootstrap_method_ref;
+                uint8_t num_bootstrap_arguments;
+                uint8_t *bootstrap_arguments;
+            } *bootstrap_methods;
+        } BootstrapMethodsAttribute;
 
         uint16_t constantvalue_index;
     };

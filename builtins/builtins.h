@@ -32,26 +32,44 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 
 typedef struct Method Method;
+typedef struct Field Field;
 typedef struct Frame Frame;
 
-typedef struct builtins {
+/* The class can access the field itself by accessing it directly */
+typedef struct builtin_fields {
+    char *name;
+    int flags;
+    /* TODO: Maybe add descriptor too? */
+} builtin_fields;
+
+typedef struct builtin_methods {
     char *name;
     char *descriptor;
+    int max_stack;
     builtin_method method;
+} builtin_methods;
+
+typedef struct builtins {
+    char *parent;
+    builtin_fields *fields;
+    int fields_length;
+    builtin_methods *methods;
+    int methods_length;
+
     int max_stack;
     int max_local;
 } builtins;
 
-extern builtins java_lang_Object_methods[];
-extern int java_lang_Object_methods_length;
+extern builtins java_lang_Object_builtins;
 
-extern builtins java_lang_System_methods[];
-extern int java_lang_System_methods_length;
+extern builtins java_lang_System_builtins;
 
-extern builtins java_io_PrintStream_methods[];
-extern int java_io_PrintStream_methods_length;
+extern builtins java_io_PrintStream_builtins;
 
-extern builtins java_util_Objects_methods[];
-extern int java_util_Objects_methods_length;
+extern builtins java_util_Objects_builtins;
+
+extern builtins java_lang_invoke_StringConcatFactory_builtins;
+
+extern builtins java_lang_String_builtins;
 
 #endif

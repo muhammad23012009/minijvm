@@ -20,14 +20,16 @@
 
 void stack_push(Stack *stack, Variant value)
 {
-    if (stack->top + 1 > stack->max_size) {
-        printf("stack_push: overflowed!!!\n");
-        printf("max size is %d, count is %d, top is %d\n", stack->max_size, stack->count, stack->top);
-        return;
+    if (stack->head == NULL) {
+        stack->head = malloc(sizeof(StackItem));
+        stack->head->item = value;
+        stack->head->next = NULL;
+    } else {
+        StackItem *new_item = malloc(sizeof(StackItem));
+        new_item->item = value;
+        new_item->next = stack->head;
+        stack->head = new_item;
     }
-
-    //printf("pushing data to stack with type %d\n", value.type);
-    stack->items[stack->top++] = value;
 }
 
 void stack_push_int(Stack *stack, int value)
@@ -57,19 +59,21 @@ void stack_push_object(Stack *stack, Object *value)
 /* Takes the top item, and duplicates it */
 void stack_dup(Stack *stack)
 {
-    stack_push(stack, stack->items[stack->top - 1]);
+    stack_push(stack, stack->head->item);
 }
 
 Variant stack_pop(Stack *stack)
 {
-    Variant empty;
-    if (stack->top <= 0)
-        return empty;
+    Variant value;
+    if (!stack->head)
+        return value;
 
-    //printf("popped an item from stack!\n");
-    stack->top--;
-    stack->count--;
-    return stack->items[stack->top];
+    StackItem *old_head = stack->head;
+    stack->head = old_head->next;
+    value = old_head->item;
+    free(old_head);
+
+    return value;
 }
 
 Stack *stack_new(int max_size)
@@ -77,13 +81,22 @@ Stack *stack_new(int max_size)
     Stack *stack = malloc(sizeof(Stack));
     stack->max_size = max_size;
     /* The stack will hold at most `max_size` items */
-    stack->items = calloc(max_size, sizeof(Variant));
-    stack->top = 0;
-    stack->count = 0;
+    stack->head = NULL;
+
+    return stack;
 }
 
 void stack_free(Stack *stack)
 {
-    free(stack->items);
+    for (StackItem *item = stack->head; item != NULL;) {
+        StackItem *next = item->next;
+
+        if (item->item.type == VARIANT_TYPE_OBJECT)
+            object_free(item->item.data.object);
+
+        free(item);
+        item = next;
+    }
+
     free(stack);
 }

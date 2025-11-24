@@ -20,34 +20,29 @@
 /* Arguments: Any (parsed automatically)
  * Returns: Void
 */
-void java_io_PrintStream_println(Method *method, Frame *frame, char *descriptor_str)
+
+void java_io_PrintStream_println_str(Method *method, Frame *frame)
 {
-    /* We do not have any descriptors. Parse them ourselves */
-    Descriptors *descriptors = descriptors_new(descriptor_str);
-
-    Class *printstream = frame->locals->items[0].data.ref;
-
-    /* Figure out what values we need to print */
-    for (int i = 0; i < descriptors->arguments_count; i++) {
-        Variant item = frame->locals->items[i + 1];
-        Descriptor desc = descriptors->arguments[i];
-        switch (desc.type) {
-            case DESCRIPTOR_INT:
-                printf("%d\n", item.data.int_val);
-                break;
-            case DESCRIPTOR_OBJECT:
-                /* Probably a string? */
-                printf("%s\n", item.data.ref);
-                break;
-            default:
-                printf("FUCK!\n");
-        }
-    }
-
-    descriptors_free(descriptors);
+    Object *printstream = frame->locals[0].data.object;
+    Object *str = frame->locals[1].data.object;
+    printf("%s\n", object_get_field(str, "value")->value.data.ref);
 }
 
-builtins java_io_PrintStream_methods[] = {
-    { "println", "", &java_io_PrintStream_println },
+void java_io_PrintStream_println_int(Method *method, Frame *frame)
+{
+    Object *printstream = frame->locals[0].data.object;
+    int32_t value = frame->locals[1].data.int_val;
+    printf("%d\n", value);
+}
+
+static builtin_methods methods[] = {
+    { "println", "(Ljava/lang/String;)V", 0, &java_io_PrintStream_println_str },
+    { "println", "(I)V", 0, &java_io_PrintStream_println_int },
 };
-int java_io_PrintStream_methods_length = ARRAY_SIZE(java_io_PrintStream_methods);
+
+builtins java_io_PrintStream_builtins = {
+    .parent = NULL, /* TODO: implement all parents */
+    .fields = NULL,
+    .methods = methods,
+    .methods_length = ARRAY_SIZE(methods),
+};

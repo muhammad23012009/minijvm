@@ -21,15 +21,19 @@
 /* Arguments: None
  * Returns: Void
 */
-void java_lang_Object_init(Method *method, Frame *frame, char *descriptor_str)
+void java_lang_Object_init(Method *method, Frame *frame)
 {
-    Object *object = frame->locals->items[0].data.object;
+    Object *object = frame->locals[0].data.object;
     object->initialized = true;
-
-    return;
 }
 
-builtins java_lang_Object_methods[] = {
-    { "<init>", "()V", &java_lang_Object_init },
+static builtin_methods methods[] = {
+    { "<init>", "()V", 0, &java_lang_Object_init },
 };
-int java_lang_Object_methods_length = ARRAY_SIZE(java_lang_Object_methods);
+
+builtins java_lang_Object_builtins = {
+    .parent = NULL, /* We are the ultimate parent. */
+    .fields = NULL,
+    .methods = methods,
+    .methods_length = ARRAY_SIZE(methods),
+};

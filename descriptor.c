@@ -93,6 +93,8 @@ Descriptors *descriptors_new(char *descriptor_str)
     char *argument_end = get_argument_end(argument_start);
     char *returns_start = *argument_end != '\0' ? argument_end + 1 : NULL;
 
+    descriptors->descriptor = descriptor_str;
+
     descriptors->arguments_count = get_descriptor_count(argument_start);
 
     descriptors->arguments = calloc(descriptors->arguments_count, sizeof(Descriptor));

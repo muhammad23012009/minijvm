@@ -24,11 +24,14 @@
 typedef struct Variant Variant;
 typedef struct Object Object;
 
+typedef struct StackItem {
+    Variant item;
+    struct StackItem *next;
+} StackItem;
+
 typedef struct Stack {
     int max_size;
-    int count;
-    int top;
-    Variant *items;
+    StackItem *head;
 } Stack;
 
 extern void stack_push(Stack *stack, Variant value);

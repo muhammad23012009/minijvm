@@ -34,6 +34,7 @@ typedef struct Attributes Attributes;
 typedef struct ConstantPool ConstantPool;
 typedef struct Method Method;
 typedef struct Variant Variant;
+typedef struct builtins builtins;
 
 typedef struct FieldInfo {
     uint16_t access_flags;
@@ -71,7 +72,7 @@ typedef struct Frame {
     int max_stack;
     int max_locals;
     Stack *stack;
-    Stack *locals;
+    Variant *locals;
     uint8_t *code;
 } Frame;
 
@@ -81,7 +82,7 @@ extern void frame_free(Frame *frame);
 /* descriptor_str is used to derive the arguments of the method in case 
  * it doesn't have its own methods.
 */
-typedef void (*builtin_method)(Method *method, Frame *frame, char *descriptor_str);
+typedef void (*builtin_method)(Method *method, Frame *frame);
 
 typedef struct Method {
     struct Class *class;
@@ -121,6 +122,10 @@ typedef struct Class {
     /* TODO: Maybe make this a single pointer? */
     Method **methods;
 
+    uint16_t static_field_count;
+    Field *static_fields;
+    bool static_initialized;
+
     /* These are not meant to be used by any functions except our own */
     Fields *class_fields;
     Fields *method_fields;
@@ -134,17 +139,18 @@ typedef struct Classes {
 } Classes;
 
 extern Class *class_parse_file(Classes *classes, char *filename);
-extern Class *class_create_builtin(char *name);
+extern Class *class_create_builtin(char *name, builtins *class_builtins, Classes *classes);
+extern void class_initialize_static(Class *class);
 extern void class_free(Class *class);
 
 extern void class_add_method(Class *class, FieldInfo method_info);
-extern void class_add_builtin_method(Class *class, char *name, char *descriptor_str, builtin_method bmethod);
-extern Method *class_get_method(Class *class, char *name);
+extern Method *class_get_method(Class *class, char *name, char *descriptor);
 extern Method *class_get_method_from_index(Class *class, uint16_t index);
+extern Field *class_get_static_field(Class *class, char *name);
 
 extern bool classes_add_class(Classes *classes, Class *class);
 extern Class *classes_get_class(Classes *classes, char *name);
-extern Class *classes_get_class_from_index(Classes *classes, uint16_t index);
+extern Class *classes_get_class_from_index(Classes *classes, ConstantPool *pool, uint16_t index);
 
 extern Method *classes_get_main_method(Classes *classes);
 

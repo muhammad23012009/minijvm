@@ -46,38 +46,19 @@ int main(int argc, char *argv[])
     Classes *classes = classes_new();
 
     /* Setup built-in classes and methods */
-    Class *java_util_Objects = class_create_builtin("java/util/Objects");
-    classes_add_class(classes, java_util_Objects);
-    for (int i = 0; i < java_util_Objects_methods_length; i++) {
-        builtins s = java_util_Objects_methods[i];
-        class_add_builtin_method(java_util_Objects, s.name, s.descriptor, s.method);
-    }
-
-    Class *java_lang_Object = class_create_builtin("java/lang/Object");
-    classes_add_class(classes, java_lang_Object);
-    for (int i = 0; i < java_lang_Object_methods_length; i++) {
-        builtins s = java_lang_Object_methods[i];
-        class_add_builtin_method(java_lang_Object, s.name, s.descriptor, s.method);
-    }
-
-    Class *java_lang_System = class_create_builtin("java/lang/System");
-    classes_add_class(classes, java_lang_System);
-    for (int i = 0; i < java_lang_System_methods_length; i++) {
-        builtins s = java_lang_System_methods[i];
-        class_add_builtin_method(java_lang_System, s.name, s.descriptor, s.method);
-    }
-
-    Class *java_io_PrintStream = class_create_builtin("java/io/PrintStream");
-    classes_add_class(classes, java_io_PrintStream);
-    for (int i = 0; i < java_io_PrintStream_methods_length; i++) {
-        builtins s = java_io_PrintStream_methods[i];
-        class_add_builtin_method(java_io_PrintStream, s.name, s.descriptor, s.method);
-    }
+    classes_add_class(classes, class_create_builtin("java/lang/Object", &java_lang_Object_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/util/Objects", &java_util_Objects_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/lang/System", &java_lang_System_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/lang/String", &java_lang_String_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/lang/invoke/StringConcatFactory", &java_lang_invoke_StringConcatFactory_builtins, classes));
 
     if (!classes_add_class(classes, class_parse_file(classes, filename))) {
         classes_free(classes);
         return 1;
     }
+
+    printf("miniJVM: all classes processed!\n");
 
     Method *main_method = classes_get_main_method(classes);
     if (!main_method) {

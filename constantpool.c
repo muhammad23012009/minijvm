@@ -20,19 +20,19 @@
 
 uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index)
 {
-    return pool->pool[index - 1].tag;
+    return pool->pool[index].tag;
 }
 
 char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index - 1];
+    ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_CLASS) {
         // Resolve to the actual tag
-        info = pool->pool[info.class_index - 1];
+        info = pool->pool[info.class_index];
     }
 
     if (info.tag == CONSTANT_STRING) {
-        info = pool->pool[info.string_index - 1];
+        info = pool->pool[info.string_index];
     }
 
     if (info.tag == CONSTANT_UTF8) {
@@ -45,13 +45,13 @@ char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 /* Used by both methods and fields */
 char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index - 1];
+    ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_METHODREF) {
-        info = pool->pool[info.method_ref.class_index - 1];
+        info = pool->pool[info.method_ref.class_index];
     }
 
     if (info.tag == CONSTANT_FIELDREF) {
-        info = pool->pool[info.field_ref.class_index - 1];
+        info = pool->pool[info.field_ref.class_index];
     }
 
     return constant_pool_resolve_string(pool, info.class_index);
@@ -59,13 +59,13 @@ char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
 
 char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index - 1];
+    ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_METHODREF) {
-        info = pool->pool[info.method_ref.name_and_type_index - 1];
+        info = pool->pool[info.method_ref.name_and_type_index];
     }
 
     if (info.tag == CONSTANT_FIELDREF) {
-        info = pool->pool[info.field_ref.name_and_type_index - 1];
+        info = pool->pool[info.field_ref.name_and_type_index];
     }
 
     return constant_pool_resolve_string(pool, info.name_and_type_info.name_index);
@@ -73,7 +73,7 @@ char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index)
 
 int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index - 1];
+    ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_INT) {
         return info.int_val;
     }
@@ -85,7 +85,7 @@ int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
 bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class *parent)
 {
     for (int i = 1; i < pool->count; i++) {
-        ConstantPoolInfo *info = &pool->pool[i - 1];
+        ConstantPoolInfo *info = &pool->pool[i];
         switch (info->tag) {
             case CONSTANT_CLASS: {
                 int length;
@@ -105,10 +105,6 @@ bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class 
                     class_name++;
                     class_name[strlen(class_name) - 1] = '\0';
                 }
-
-                /* Turn this into a built-in later */
-                if (!strcmp("java/lang/String", class_name))
-                    continue;
 
                 if (classes_get_class(classes, class_name))
                     continue;
@@ -133,10 +129,10 @@ ConstantPool *constant_pool_new(Reader *reader)
 {
     ConstantPool *cpool = malloc(sizeof(ConstantPool));
     cpool->count = reader_read_uint16_be(reader);
-    cpool->pool = malloc(sizeof(ConstantPoolInfo) * cpool->count);
+    cpool->pool = malloc(sizeof(ConstantPoolInfo) * (cpool->count + 1));
 
     for (int i = 1; i < cpool->count; i++) {
-        ConstantPoolInfo *cp_info = &cpool->pool[i - 1];
+        ConstantPoolInfo *cp_info = &cpool->pool[i];
         cp_info->tag = reader_read_uint8(reader);
         switch (cp_info->tag) {
             case CONSTANT_UTF8:

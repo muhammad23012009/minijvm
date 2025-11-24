@@ -66,6 +66,16 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
             // TODO: Parse these once we handle the basic attributes
             attr->CodeAttribute.attributes = attributes_new(reader, pool);
         } else if (!strcmp(attr->attribute_info.attribute, "InnerClasses")) {
+        } else if (!strcmp(attr->attribute_info.attribute, "BootstrapMethods")) {
+            attr->BootstrapMethodsAttribute.num_bootstrap_methods = reader_read_uint8(reader);
+            attr->BootstrapMethodsAttribute.bootstrap_methods = malloc(sizeof(*attr->BootstrapMethodsAttribute.bootstrap_methods) * attr->BootstrapMethodsAttribute.num_bootstrap_methods);
+
+            for (int j = 0; j < attr->BootstrapMethodsAttribute.num_bootstrap_methods; j++) {
+                attr->BootstrapMethodsAttribute.bootstrap_methods[j].bootstrap_method_ref = reader_read_uint8(reader);
+                attr->BootstrapMethodsAttribute.bootstrap_methods[j].num_bootstrap_arguments = reader_read_uint8(reader);
+                attr->BootstrapMethodsAttribute.bootstrap_methods[j].bootstrap_arguments = malloc(sizeof(uint8_t) * attr->BootstrapMethodsAttribute.bootstrap_methods[j].num_bootstrap_arguments);
+                reader_read_bytes(reader, attr->BootstrapMethodsAttribute.bootstrap_methods[j].bootstrap_arguments, attr->BootstrapMethodsAttribute.bootstrap_methods[j].num_bootstrap_arguments);
+            }
         } else {
             reader_skip(reader, attr->attribute_length);
         }
