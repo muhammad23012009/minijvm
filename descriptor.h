@@ -31,15 +31,22 @@ typedef struct Descriptors {
      * () means no arguments
      * V means void return
     */
-    char *descriptor;
+    const char *descriptor;
 
     Descriptor *arguments;
     Descriptor return_descriptor;
 } Descriptors;
 
-extern int get_descriptor_count(char *descriptor);
+extern int get_descriptor_count(const char *descriptor);
 
-extern Descriptors *descriptors_new(char *descriptor);
+extern Descriptors *descriptors_new(const char *descriptor);
 extern void descriptors_free(Descriptors *descriptor);
+
+#define FOREACH_DESCRIPTOR(descriptors) \
+    int i = 0; \
+    for (Descriptor descriptor = descriptors->arguments[i]; i < descriptors->arguments_count; ++i) \
+
+#define DESCRIPTORS_GET_RETURN_TYPE(descriptors) \
+    descriptors->return_descriptor.type
 
 #endif

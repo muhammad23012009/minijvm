@@ -37,20 +37,20 @@ typedef struct Frame Frame;
 
 /* The class can access the field itself by accessing it directly */
 typedef struct builtin_fields {
-    char *name;
+    const char *name;
+    const char *descriptor;
     int flags;
-    /* TODO: Maybe add descriptor too? */
 } builtin_fields;
 
 typedef struct builtin_methods {
-    char *name;
-    char *descriptor;
-    int max_stack;
-    builtin_method method;
+    const char *name;
+    const char *descriptor;
+    int flags;
+    void *method;
 } builtin_methods;
 
 typedef struct builtins {
-    char *parent;
+    const char *parent;
     builtin_fields *fields;
     int fields_length;
     builtin_methods *methods;
@@ -71,5 +71,5 @@ extern builtins java_util_Objects_builtins;
 extern builtins java_lang_invoke_StringConcatFactory_builtins;
 
 extern builtins java_lang_String_builtins;
-
+extern builtins java_lang_Class_builtins;
 #endif

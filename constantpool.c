@@ -23,7 +23,7 @@ uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index)
     return pool->pool[index].tag;
 }
 
-char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
+const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 {
     ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_CLASS) {
@@ -43,7 +43,7 @@ char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 }
 
 /* Used by both methods and fields */
-char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
+const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
 {
     ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_METHODREF) {
@@ -57,7 +57,7 @@ char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
     return constant_pool_resolve_string(pool, info.class_index);
 }
 
-char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index)
+const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index)
 {
     ConstantPoolInfo info = pool->pool[index];
     if (info.tag == CONSTANT_METHODREF) {
@@ -90,20 +90,23 @@ bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class 
             case CONSTANT_CLASS: {
                 int length;
                 char class_path[2048];
-                char *class_name = constant_pool_resolve_string(pool, info->class_index);
+                char class_name[64]; // Good assumption?
+                char *ptr = class_name;
+
+                strncpy(class_name, constant_pool_resolve_string(pool, info->class_index), 64);
                 if (!strcmp(class_name, parent->name))
                     continue;
 
-                if (*class_name == '[') {
+                if (*ptr == '[') {
                     /* Java array. Skip this character */
-                    class_name++;
+                    ptr++;
                 }
 
-                if (*class_name == 'L' && *(class_name + strlen(class_name) - 1) == ';') {
+                if (*ptr == 'L' && *(ptr + strlen(class_name) - 1) == ';') {
                     /* Java object */
                     printf("Got a Java object!\n");
-                    class_name++;
-                    class_name[strlen(class_name) - 1] = '\0';
+                    ptr++;
+                    ptr[strlen(class_name) - 1] = '\0';
                 }
 
                 if (classes_get_class(classes, class_name))

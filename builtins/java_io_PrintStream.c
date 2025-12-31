@@ -17,21 +17,14 @@
 
 #include "builtins.h"
 
-/* Arguments: Any (parsed automatically)
- * Returns: Void
-*/
-
-void java_io_PrintStream_println_str(Method *method, Frame *frame)
+void java_io_PrintStream_println_str(Object *this, Object *str)
 {
-    Object *printstream = frame->locals[0].data.object;
-    Object *str = frame->locals[1].data.object;
     printf("%s\n", object_get_field(str, "value")->value.data.ref);
 }
 
-void java_io_PrintStream_println_int(Method *method, Frame *frame)
+void java_io_PrintStream_println_int(Object *this, int value)
 {
-    Object *printstream = frame->locals[0].data.object;
-    int32_t value = frame->locals[1].data.int_val;
+    printf("'this' is %s\n", this->class->name);
     printf("%d\n", value);
 }
 

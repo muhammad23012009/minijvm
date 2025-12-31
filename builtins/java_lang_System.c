@@ -18,15 +18,15 @@
 #include "builtins.h"
 #include "../method.h"
 
-void java_lang_System_clinit(Method *method, Frame *frame)
+void java_lang_System_clinit(Class *this)
 {
-    Class *printstream = classes_get_class(method->class->classes, "java/io/PrintStream");
-    Field *field = class_get_static_field(method->class, "out");
+    Class *printstream = classes_get_class(this->classes, "java/io/PrintStream");
+    Field *field = class_get_static_field(this, "out");
     field->value.data.object = object_new(printstream);
 }
 
 static builtin_fields fields[] = {
-    { "out", 0x0008 },
+    { "out", "Ljava/io/PrintStream;", 0x0008 },
 };
 
 static builtin_methods methods[] = {

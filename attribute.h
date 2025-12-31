@@ -28,7 +28,7 @@ typedef struct ConstantPool ConstantPool;
 typedef struct AttributeInfo {
     struct {
         uint16_t index;
-        char *attribute;
+        const char *attribute;
     } attribute_info;
     uint32_t attribute_length;
 
@@ -61,7 +61,7 @@ typedef struct Attributes {
 } Attributes;
 
 /* Helper functions */
-extern AttributeInfo attributes_get_attribute(Attributes *attrs, char *name);
+extern AttributeInfo *attributes_get_attribute(Attributes *attrs, char *name);
 
 extern Attributes *attributes_new(Reader *reader, ConstantPool *pool);
 extern void attributes_free(Attributes *attributes);

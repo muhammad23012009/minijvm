@@ -79,8 +79,8 @@ Variant stack_pop(Stack *stack)
 Stack *stack_new(int max_size)
 {
     Stack *stack = malloc(sizeof(Stack));
-    stack->max_size = max_size;
     /* The stack will hold at most `max_size` items */
+    stack->max_size = max_size;
     stack->head = NULL;
 
     return stack;
@@ -90,9 +90,6 @@ void stack_free(Stack *stack)
 {
     for (StackItem *item = stack->head; item != NULL;) {
         StackItem *next = item->next;
-
-        if (item->item.type == VARIANT_TYPE_OBJECT)
-            object_free(item->item.data.object);
 
         free(item);
         item = next;

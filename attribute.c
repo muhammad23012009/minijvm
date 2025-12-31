@@ -17,11 +17,11 @@
 
 #include "attribute.h"
 
-AttributeInfo attributes_get_attribute(Attributes *attrs, char *name)
+AttributeInfo *attributes_get_attribute(Attributes *attrs, char *name)
 {
     for (int i = 0; i < attrs->count; i++) {
         if (!strcmp(attrs->attributes[i].attribute_info.attribute, name)) {
-            return attrs->attributes[i];
+            return &attrs->attributes[i];
         }
     }
 }
@@ -91,9 +91,18 @@ void attributes_free(Attributes *attributes)
 
     for (int i = 0; i < attributes->count; i++) {
         AttributeInfo info = attributes->attributes[i];
-        if (!strcmp(info.attribute_info.attribute, "Code")) {
+        const char *attribute_name = info.attribute_info.attribute;
+        if (!strcmp(attribute_name, "Code")) {
             attributes_free(info.CodeAttribute.attributes);
+            free(info.CodeAttribute.code);
+        } else if (!strcmp(attribute_name, "BootstrapMethods")) {
+            for (int j = 0; j < info.BootstrapMethodsAttribute.num_bootstrap_methods; j++) {
+                free(info.BootstrapMethodsAttribute.bootstrap_methods[j].bootstrap_arguments);
+            }
+            free(info.BootstrapMethodsAttribute.bootstrap_methods);
         }
     }
+
+    free(attributes->attributes);
     free(attributes);
 }

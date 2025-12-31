@@ -1,9 +1,9 @@
 #include "descriptor.h"
 #include <stdio.h>
 
-char *get_argument_end(char *argument_start)
+const char *get_argument_end(const char *argument_start)
 {
-    char *str = argument_start;
+    const char *str = argument_start;
     while (*str != ')' && *str != '\0') {
         str++;
     }
@@ -11,7 +11,7 @@ char *get_argument_end(char *argument_start)
     return str;
 }
 
-int get_descriptor_count(char *descriptor)
+int get_descriptor_count(const char *descriptor)
 {
     int count = 0;
 
@@ -34,7 +34,7 @@ int get_descriptor_count(char *descriptor)
     return count;
 }
 
-Descriptor parse_descriptor(char **string, char *end)
+Descriptor parse_descriptor(const char **string, const char *end)
 {
     Descriptor descriptor;
     descriptor.array_dimesions_count = 0;
@@ -86,12 +86,12 @@ Descriptor parse_descriptor(char **string, char *end)
     return descriptor;
 }
 
-Descriptors *descriptors_new(char *descriptor_str)
+Descriptors *descriptors_new(const char *descriptor_str)
 {
     Descriptors *descriptors = malloc(sizeof(Descriptors));
-    char *argument_start = descriptor_str;
-    char *argument_end = get_argument_end(argument_start);
-    char *returns_start = *argument_end != '\0' ? argument_end + 1 : NULL;
+    const char *argument_start = descriptor_str;
+    const char *argument_end = get_argument_end(argument_start);
+    const char *returns_start = *argument_end != '\0' ? argument_end + 1 : NULL;
 
     descriptors->descriptor = descriptor_str;
 
@@ -113,6 +113,14 @@ void descriptors_free(Descriptors *descriptors)
 {
     if (!descriptors)
         return;
+
+    if (descriptors->return_descriptor.type == DESCRIPTOR_OBJECT)
+        free(descriptors->return_descriptor.object_name);
+
+    for (int i = 0; i < descriptors->arguments_count; i++) {
+        if (descriptors->arguments[i].type == DESCRIPTOR_OBJECT)
+            free(descriptors->arguments[i].object_name);
+    }
 
     free(descriptors->arguments);
     free(descriptors);

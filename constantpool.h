@@ -90,10 +90,10 @@ typedef struct Interface {
 
 /* Helper functions */
 extern uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index);
-extern char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index);
+extern const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index);
 
-extern char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index);
-extern char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
+extern const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index);
+extern const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
 extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
 extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class *parent);
 

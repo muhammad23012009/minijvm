@@ -21,17 +21,16 @@
 /* Arguments: Reference to java/lang/Object
  * Returns: Reference to java/lang/Object
 */
-void java_util_Objects_requireNonNull(Method *method, Frame *frame)
+Object *java_util_Objects_requireNonNull(Object *object)
 {
-    Object *object = frame->locals[0].data.object;
     if (!object->initialized)
         printf("Uninitialized object!\n");
 
-    stack_push_object(frame->stack, object);
+    return object;
 }
 
 static builtin_methods methods[] = {
-    { "requireNonNull", "(Ljava/lang/Object;)Ljava/lang/Object", 1, &java_util_Objects_requireNonNull },
+    { "requireNonNull", "(Ljava/lang/Object;)Ljava/lang/Object", 0x0008, &java_util_Objects_requireNonNull },
 };
 
 builtins java_util_Objects_builtins = {

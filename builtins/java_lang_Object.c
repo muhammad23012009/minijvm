@@ -18,16 +18,22 @@
 #include "builtins.h"
 #include "../method.h"
 
-/* Arguments: None
- * Returns: Void
-*/
-void java_lang_Object_init(Method *method, Frame *frame)
+/* Maintain a list of Class's with their java/lang/Class objects */
+Object *java_lang_Object_getClass(Object *this)
 {
-    Object *object = frame->locals[0].data.object;
-    object->initialized = true;
+    Object *cobj = object_new(classes_get_class(this->class->classes, "java/lang/Class"));
+    object_get_field(cobj, "class")->value.data.class = this->class;
+    return cobj;
+}
+
+void java_lang_Object_init(Object *this)
+{
+    this->initialized = true;
+    printf("Initialized object of class %s\n", this->class->name);
 }
 
 static builtin_methods methods[] = {
+    { "getClass", "()Ljava/lang/Class;", 0, &java_lang_Object_getClass },
     { "<init>", "()V", 0, &java_lang_Object_init },
 };
 

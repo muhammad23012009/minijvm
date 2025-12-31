@@ -16,6 +16,7 @@
  */
 
 #include "object.h"
+#include "gc.h"
 
 /* TODO:
  * Add fields for objects 
@@ -23,10 +24,10 @@
  * Also maybe we want to add something else here?
  */
 
-Field *object_get_field(Object *object, char *field_name)
+Field *object_get_field(Object *object, const char *field_name)
 {
     for (int i = 0; i < object->fields_count; i++) {
-        Field *f = object->fields[i];
+        Field *f = &object->fields[i];
         if (!strcmp(f->name, field_name))
             return f;
     }
@@ -41,30 +42,19 @@ Object *object_new(Class *class)
     object->initialized = false;
 
     /* Parse all fields in the class */
-    if (class->class_fields) {
-        object->fields_count = class->class_fields->count;
-        object->fields = malloc(sizeof(Field*) * object->fields_count);
-        for (int i = 0; i < class->class_fields->count; i++) {
-            FieldInfo *info = &class->class_fields->fields[i];
-            Field *field = malloc(sizeof(Field));
-
-            field->name = info->name.name;
-            field->class = class;
-            object->fields[i] = field;
-        }
+    if (class->fields && class->fields->fields_count > 0) {
+        object->fields_count = class->fields->fields_count;
+        object->fields = class->fields->fields;
     } else {
         object->fields_count = 0;
         object->fields = NULL;
     }
 
+    gc_track_object(object);
     return object;
 }
 
 void object_free(Object *object)
 {
-    for (int i = 0; i < object->fields_count; i++)
-        free(object->fields[i]);
-
-    free(object->fields);
     free(object);
 }

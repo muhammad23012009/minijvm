@@ -23,6 +23,7 @@
 #include "minijvm.h"
 #include "reader.h"
 #include "builtins/builtins.h"
+#include "gc.h"
 
 static char *help_text = "miniJVM: a stupidly simple JVM. \n\
 Usage: ./miniJVM <class name>\n";
@@ -51,6 +52,7 @@ int main(int argc, char *argv[])
     classes_add_class(classes, class_create_builtin("java/lang/System", &java_lang_System_builtins, classes));
     classes_add_class(classes, class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins, classes));
     classes_add_class(classes, class_create_builtin("java/lang/String", &java_lang_String_builtins, classes));
+    classes_add_class(classes, class_create_builtin("java/lang/Class", &java_lang_Class_builtins, classes));
     classes_add_class(classes, class_create_builtin("java/lang/invoke/StringConcatFactory", &java_lang_invoke_StringConcatFactory_builtins, classes));
 
     if (!classes_add_class(classes, class_parse_file(classes, filename))) {
@@ -67,11 +69,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    gc_create();
     Frame *main_frame = frame_new(main_method->max_stack, main_method->max_local);
 
     method_execute(main_method, main_frame);
 
     classes_free(classes);
     frame_free(main_frame);
+    gc_free();
+
     return 0;
 }

@@ -15,27 +15,31 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <avcall.h>
+
 #include "builtins/builtins.h"
 #include "array.h"
 #include "method.h"
 #include "object.h"
+#include "gc.h"
 
 /* TODO: 
  * Implement exceptions
- * Implement proper garbage collection
+ * Improve garbage collection
+ * Improve method and class lookups with hashmaps
+ * Improve object creation with a global list of classes
+ * Improve object field accession and value assignments
  * Implement overloaded methods for superclasses
- * Free up objects created in a method when it returns
- * Improve built-in APIs/classes
  * Implement a proper types system
  * Figure out how to represent stored constants, do we represent them as objects or something else?
  * Does Java have a stack/heap system for variables?
  * ...etc
  */
 
-#define DISPATCH() \
-    ++frame->pc; \
-    op = data[frame->pc]; \
-    goto *opcodes[op]
+#define DISPATCH()          \
+    ++frame->pc;            \
+    op = data[frame->pc];   \
+    goto *opcodes[op]       \
 
 Frame *frame_new(int max_stack, int max_local)
 {
@@ -45,12 +49,17 @@ Frame *frame_new(int max_stack, int max_local)
 
     frame->stack = stack_new(max_stack);
     frame->locals = calloc(max_local, sizeof(Variant));
+    memset(frame->locals, 0, sizeof(Variant) * max_local);
+
+    gc_track_frame(frame);
 
     return frame;
 }
 
 void frame_free(Frame *frame)
 {
+    gc_untrack_frame(frame);
+
     stack_free(frame->stack);
     free(frame->locals);
     free(frame);
@@ -63,12 +72,72 @@ Method *get_method(ConstantPool *pool, Class *class, uint16_t index)
     uint16_t name_and_type_index = pool->pool[index].method_ref.name_and_type_index;
     uint16_t method_index = pool->pool[name_and_type_index].name_and_type_info.name_index;
     uint16_t descriptor_index = pool->pool[name_and_type_index].name_and_type_info.descriptor_index;
-    char *method_name = constant_pool_resolve_string(pool, method_index);
-    char *descriptor = constant_pool_resolve_string(pool, descriptor_index);
+    const char *method_name = constant_pool_resolve_string(pool, method_index);
+    const char *descriptor = constant_pool_resolve_string(pool, descriptor_index);
 
     class_method = class_get_method(class, method_name, descriptor);
 
     return class_method;
+}
+
+static inline VariantType descriptor_to_variant_type(DescriptorType type)
+{
+    switch (type) {
+        case DESCRIPTOR_INT:
+            return VARIANT_TYPE_INT;
+        case DESCRIPTOR_OBJECT:
+            return VARIANT_TYPE_OBJECT;
+        default:
+            return VARIANT_TYPE_NONE;
+    }
+}
+
+void call_native_method(Method *method, Frame *frame)
+{
+    /* Convert all of the arguments from the method's descriptors to native arguments */
+    av_alist list;
+    Variant return_value;
+    int j = 1;
+
+    if (!strcmp(method->name, "<clinit>")) {
+        /* Static initializer */
+        av_start_void(list, (void(*)())method->native_method);
+        av_ptr(list, Class *, method->class);
+        goto call;
+    }
+
+    /* Check return type of the native method. */
+    switch (DESCRIPTORS_GET_RETURN_TYPE(method->descriptors))
+    {
+        case DESCRIPTOR_VOID:
+            av_start_void(list, (void(*)())method->native_method);
+        case DESCRIPTOR_INT:
+            av_start_int(list, (int(*)())method->native_method, &return_value.data.int_val);
+            return_value.type = VARIANT_TYPE_INT;
+        case DESCRIPTOR_OBJECT:
+            av_start_ptr(list, (Object*(*)())method->native_method, Object *, &return_value.data.object);
+            return_value.type = VARIANT_TYPE_OBJECT;
+    }
+
+    /* If the function isn't static, push the "this" pointer */
+    if (!(method->info.access_flags & 0x0008))
+        av_ptr(list, Object *, frame->locals[0].data.object);
+
+    FOREACH_DESCRIPTOR(method->descriptors) {
+        switch (descriptor.type) {
+            case DESCRIPTOR_INT:
+                av_int(list, frame->locals[j].data.int_val);
+            case DESCRIPTOR_OBJECT:
+                av_ptr(list, Object *, frame->locals[j].data.object);
+        }
+        j++;
+    }
+
+call:
+    av_call(list);
+
+    if (DESCRIPTORS_GET_RETURN_TYPE(method->descriptors) != DESCRIPTOR_VOID)
+        stack_push(frame->stack, return_value);
 }
 
 void method_execute(Method *method, Frame *frame)
@@ -97,6 +166,7 @@ void method_execute(Method *method, Frame *frame)
         [87] = &&pop,
         [89] = &&dup,
         [96] = &&iadd,
+        [108] = &&idiv,
         [132] = &&iinc,
         [159 ... 164] = &&if_cmpx,
         [167] = &&j_goto,
@@ -108,6 +178,7 @@ void method_execute(Method *method, Frame *frame)
         [181] = &&putfield,
         [182] = &&invokevirtual,
         [183] = &&invokespecial,
+        [184] = &&invokestatic,
         [186] = &&invokedynamic,
         [187] = &&new,
         [189] = &&anewarray,
@@ -143,6 +214,13 @@ void method_execute(Method *method, Frame *frame)
         Variant variant;
 
         switch (tag) {
+            case CONSTANT_CLASS: {
+                Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+                variant.data.class = class;
+                variant.type = VARIANT_TYPE_CLASS;
+                break;
+            }
+
             case CONSTANT_INT: {
                 variant.data.int_val = constant_pool_resolve_int(pool, index);
                 variant.type = VARIANT_TYPE_INT;
@@ -248,6 +326,12 @@ void method_execute(Method *method, Frame *frame)
         stack_push_int(frame->stack, a1 + a2);
         DISPATCH();
 
+    idiv:
+        int d2 = stack_pop(frame->stack).data.int_val;
+        int d1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, d1 / d2);
+        DISPATCH();
+
     iinc:
         uint8_t index = data[++frame->pc];
         int8_t const_val = data[++frame->pc];
@@ -311,11 +395,11 @@ void method_execute(Method *method, Frame *frame)
     getstatic: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(method->class->classes, pool, index);
-        if (class->static_field_count && !class->static_initialized) {
+        if (class->fields->static_fields_count && !class->static_initialized) {
             class_initialize_static(class);
         }
 
-        char *field_name = constant_pool_resolve_field_name(pool, index);
+        const char *field_name = constant_pool_resolve_field_name(pool, index);
         Field *field = class_get_static_field(class, field_name);
 
         stack_push(frame->stack, field->value);
@@ -326,7 +410,7 @@ void method_execute(Method *method, Frame *frame)
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(method->class->classes, pool, index);
         /* Check if the class has been initialized yet. */
-        if (class->static_field_count && !class->static_initialized) {
+        if (class->fields->static_fields_count && !class->static_initialized) {
             class_initialize_static(class);
         }
 
@@ -340,7 +424,7 @@ void method_execute(Method *method, Frame *frame)
     getfield: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Object *object = stack_pop(frame->stack).data.object;
-        char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
+        const char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
         Field *field = object_get_field(object, field_name);
 
         stack_push(frame->stack, field->value);
@@ -352,7 +436,7 @@ void method_execute(Method *method, Frame *frame)
         Variant value = stack_pop(frame->stack);
         Object *object = stack_pop(frame->stack).data.object;
 
-        char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
+        const char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
         Field *field = object_get_field(object, field_name);
 
         field->value = value;
@@ -365,7 +449,6 @@ void method_execute(Method *method, Frame *frame)
         Method *class_method = get_method(pool, class, index);
 
         Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
-        //printf("made new subframe for submethod %s in class %s with max stack %d virt\n", class_method->name, class->name, class_method->max_stack);
 
         int arguments_count = class_method->descriptors->arguments_count;
 
@@ -377,7 +460,7 @@ void method_execute(Method *method, Frame *frame)
         subframe->locals[0] = item;
 
         if (class->built_in) {
-            class_method->method(method, subframe);
+            call_native_method(class_method, subframe);
         } else {
             method_execute(class_method, subframe);
         }
@@ -422,7 +505,7 @@ void method_execute(Method *method, Frame *frame)
 
         if (class->built_in) {
             class->pool = pool;
-            class_method->method(class_method, subframe);
+            call_native_method(class_method, subframe);
         } else {
             method_execute(class_method, subframe);
         }
@@ -437,6 +520,10 @@ void method_execute(Method *method, Frame *frame)
 
         frame_free(subframe);
         DISPATCH();
+    }
+
+    invokestatic: {
+        
     }
 
     invokedynamic: {
@@ -469,53 +556,6 @@ void method_execute(Method *method, Frame *frame)
 
         DISPATCH();
     }
-}
-
-/* Field creation/accession methods */
-FieldInfo fields_get_field(Fields *fields, char *name)
-{
-    for (int i = 0; i < fields->count; i++) {
-        FieldInfo info = fields->fields[i];
-        if (!strcmp(info.name.name, name))
-            return info;
-    }
-}
-
-Fields *fields_new(Reader *reader, ConstantPool *pool)
-{
-    Fields *fields = malloc(sizeof(Fields));
-    fields->count = reader_read_uint16_be(reader);
-    if (fields->count <= 0) {
-        free(fields);
-        return NULL;
-    }
-
-    fields->fields = malloc(sizeof(FieldInfo) * fields->count);
-
-    for (int i = 0; i < fields->count; i++) {
-        FieldInfo *field = &fields->fields[i];
-        field->access_flags = reader_read_uint16_be(reader);
-        field->name.index = reader_read_uint16_be(reader);
-        field->name.name = constant_pool_resolve_string(pool, field->name.index);
-        field->descriptor.index = reader_read_uint16_be(reader);
-        field->descriptor.descriptor = constant_pool_resolve_string(pool, field->descriptor.index);
-        field->attributes = attributes_new(reader, pool);
-    }
-
-    return fields;
-}
-
-void fields_free(Fields *fields)
-{
-    if (!fields)
-        return;
-
-    for (int i = 0; i < fields->count; i++) {
-        FieldInfo info = fields->fields[i];
-        attributes_free(info.attributes);
-    }
-    free(fields->fields);
-    free(fields);
 }
 
 /* Class/methods code */
@@ -572,41 +612,13 @@ Class *class_parse_file(Classes *classes, char *filename)
         iface->interface = constant_pool_resolve_string(class->pool, iface->index);
     }
 
+    free(interfaces); // TODO: Implement interfaces
+
     /* TODO: Eventually drop these somehow */
-    class->class_fields = fields_new(reader, class->pool);
-    class->method_fields = fields_new(reader, class->pool);
+    class->fields = fields_new(class, reader, class->pool);
+    class->methods = methods_new(class, reader, class->pool, &class->methods_count);
     class->attributes = attributes_new(reader, class->pool);
-    class->static_field_count = 0;
     class->static_initialized = false;
-
-    if (class->class_fields) {
-        /* Parse static fields within the class and separate them */
-        for (int i = 0; i < class->class_fields->count; i++) {
-            FieldInfo info = class->class_fields->fields[i];
-            /* ACC_STATIC */
-            if (info.access_flags & 0x0008) {
-                class->static_field_count++;
-            }
-        }
-
-        if (class->static_field_count) {
-            class->static_fields = malloc(sizeof(Field) * class->static_field_count);
-            int j = 0;
-            for (int i = 0; i < class->class_fields->count; i++) {
-                FieldInfo info = class->class_fields->fields[i];
-                if (info.access_flags & 0x0008) {
-                    Field *field = &class->static_fields[j++];
-                    field->name = info.name.name;
-                    field->class = class;
-                }
-            }
-        }
-    }
-
-    for (int i = 0; i < class->method_fields->count; i++) {
-        FieldInfo info = class->method_fields->fields[i];
-        class_add_method(class, info);
-    }
 
     printf("fields and methods...\n");
 
@@ -623,12 +635,12 @@ void class_initialize_static(Class *class)
 {
     Method *static_init = NULL;
 
-    if (class->static_field_count && (static_init = class_get_method(class, "<clinit>", "()V"))) {
+    if (class->fields->static_fields_count && (static_init = class_get_method(class, "<clinit>", "()V"))) {
         class->static_initialized = true;
         Frame *frame = frame_new(static_init->max_stack, static_init->max_local);
 
         if (class->built_in)
-            static_init->method(static_init, frame);
+            call_native_method(static_init, frame);
         else
             method_execute(static_init, frame);
 
@@ -640,19 +652,13 @@ void class_free(Class *class)
 {
     if (!class->built_in) {
         attributes_free(class->attributes);
-        fields_free(class->class_fields);
-        fields_free(class->method_fields);
+        fields_free(class->fields);
+        methods_free(class->methods, class->methods_count);
         constant_pool_free(class->pool);
         free(class->reader);
         free(class->data);
     }
-
-    for (int j = 0; j < class->methods_count; j++) {
-        descriptors_free(class->methods[j]->descriptors);
-        free(class->methods[j]);
-    }
-
-    free(class->methods);
+    free(class);
 }
 
 /* Built-in classes will have no constant pools or any other associated
@@ -669,86 +675,18 @@ Class *class_create_builtin(char *name, builtins *class_builtins, Classes *class
         class->parent = classes_get_class(classes, class_builtins->parent);
 
     class->methods_count = class_builtins->methods_length;
-    class->methods = malloc(sizeof(Method*) * class->methods_count);
+    class->methods = methods_new_builtin(class, class_builtins);
+    class->fields = fields_new_builtin(class, class_builtins);
 
-    for (int i = 0; i < class_builtins->methods_length; i++) {
-        builtin_methods bmethod = class_builtins->methods[i];
-        Method *method = class->methods[i] = malloc(sizeof(Method));
-        method->name = bmethod.name;
-        method->class = class;
-        method->method = bmethod.method;
-        method->flags = 0; // TODO: Implement method flags
-
-        if (strcmp(bmethod.descriptor, "") != 0) {
-            /* This built-in method has predefined arguments and returns */
-            method->descriptors = descriptors_new(bmethod.descriptor);
-            method->max_local = method->descriptors->arguments_count + 1; // +1 for `this`
-            method->max_stack = bmethod.max_stack;
-        }
-    }
-
-    for (int i = 0; i < class_builtins->fields_length; i++) {
-        builtin_fields *field = &class_builtins->fields[i];
-        if (field->flags & 0x0008) { // ACC_STATIC
-            class->static_field_count++;
-        } else {
-            class->class_fields = malloc(sizeof(Fields));
-            class->class_fields->count = class_builtins->fields_length;
-            class->class_fields->fields = malloc(sizeof(Field) * class->class_fields->count);
-
-            for (int j = 0; j < class_builtins->fields_length; j++) {
-                builtin_fields *bf = &class_builtins->fields[j];
-                FieldInfo *fi = &class->class_fields->fields[j];
-                fi->name.name = bf->name;
-                fi->descriptor.descriptor = NULL; // TODO: Implement built-in field descriptors
-                fi->access_flags = bf->flags;
-            }
-        }
-    }
-
-    if (class->static_field_count) {
-        class->static_fields = malloc(sizeof(Field) * class->static_field_count);
-        int j = 0;
-        for (int i = 0; i < class_builtins->fields_length; i++) {
-            builtin_fields *field = &class_builtins->fields[i];
-            if (field->flags & 0x0008) { // ACC_STATIC
-                Field *f = &class->static_fields[j++];
-                f->name = field->name;
-                f->class = class;
-            }
-        }
-    }
+    class->static_initialized = false;
 
     return class;
 }
 
-void class_add_method(Class *class, FieldInfo method_info)
-{
-    Method *method = malloc(sizeof(Method));
-    AttributeInfo code = attributes_get_attribute(method_info.attributes, "Code");
-
-    method->name = method_info.name.name;
-    method->class = class;
-    method->data_length = code.CodeAttribute.code_length;
-    method->data = code.CodeAttribute.code;
-    method->flags = method_info.access_flags;
-    method->max_stack = code.CodeAttribute.max_stack;
-    method->max_local = code.CodeAttribute.max_locals;
-    method->descriptors = descriptors_new(method_info.descriptor.descriptor);
-
-    if (class->methods)
-        class->methods = realloc(class->methods, (sizeof(Method*) * (class->methods_count + 1)));
-    else
-        class->methods = malloc(sizeof(Method*));
-
-    class->methods[class->methods_count] = method;
-    class->methods_count++;
-}
-
-Method *class_get_method(Class *class, char *name, char *descriptor)
+Method *class_get_method(Class *class, const char *name, const char *descriptor)
 {
     for (int i = 0; i < class->methods_count; i++) {
-        Method *method = class->methods[i];
+        Method *method = &class->methods[i];
         if (!strcmp(method->name, name) && !strcmp(method->descriptors->descriptor, descriptor))
             return method;
     }
@@ -756,10 +694,10 @@ Method *class_get_method(Class *class, char *name, char *descriptor)
     return NULL;
 }
 
-Field *class_get_static_field(Class *class, char *name)
+Field *class_get_static_field(Class *class, const char *name)
 {
-    for (int i = 0; i < class->static_field_count; i++) {
-        Field *f = &class->static_fields[i];
+    for (int i = 0; i < class->fields->static_fields_count; i++) {
+        Field *f = &class->fields->static_fields[i];
         if (!strcmp(name, f->name))
             return f;
     }
@@ -774,8 +712,8 @@ Method *class_get_method_from_index(Class *class, uint16_t index)
     uint16_t name_index = class->pool->pool[method_index].name_and_type_info.name_index;
     uint16_t descriptor_index = class->pool->pool[method_index].name_and_type_info.descriptor_index;
 
-    char *name = constant_pool_resolve_string(class->pool, name_index);
-    char *descriptor = constant_pool_resolve_string(class->pool, descriptor_index);
+    const char *name = constant_pool_resolve_string(class->pool, name_index);
+    const char *descriptor = constant_pool_resolve_string(class->pool, descriptor_index);
     return class_get_method(class, name, descriptor);
 }
 
@@ -791,8 +729,11 @@ bool classes_add_class(Classes *classes, Class *class)
     return true;
 }
 
-Class *classes_get_class(Classes *classes, char *name)
+Class *classes_get_class(Classes *classes, const char *name)
 {
+    if (!classes || !name)
+        return NULL;
+
     for (int i = 0; i < classes->count; i++) {
         Class *class = classes->classes[i];
         if (!strcmp(class->name, name))
@@ -805,7 +746,7 @@ Class *classes_get_class(Classes *classes, char *name)
 /* TODO: Fix this method */
 Class *classes_get_class_from_index(Classes *classes, ConstantPool *pool, uint16_t index)
 {
-    char *name = constant_pool_resolve_class_name(pool, index);
+    const char *name = constant_pool_resolve_class_name(pool, index);
     return classes_get_class(classes, name);
 }
 
@@ -814,12 +755,12 @@ Method *classes_get_main_method(Classes *classes)
     for (int i = 0; i < classes->count; i++) {
         Class *class = classes->classes[i];
         for (int j = 0; j < class->methods_count; j++) {
-            Method *method = class->methods[j];
+            Method *method = &class->methods[j];
             if (!strcmp(method->name, "main")) {
                 // We found the main method. Great. Mark this as our main class.
                 printf("Found method main in class %s\n", class->name);
                 classes->main_class = class;
-                return class->methods[j];
+                return &class->methods[j];
             }
         }
     }

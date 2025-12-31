@@ -34,10 +34,10 @@ typedef struct Object {
     bool initialized;
 
     uint16_t fields_count;
-    Field **fields;
+    Field *fields;
 } Object;
 
-extern Field *object_get_field(Object *object, char *field_name);
+extern Field *object_get_field(Object *object, const char *field_name);
 extern Object *object_new(Class *class);
 extern void object_free(Object *object);
 
