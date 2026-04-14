@@ -628,11 +628,6 @@ Class *class_parse_file(Classes *classes, char *filename)
 
     printf("fields and methods...\n");
 
-    if (!constant_pool_resolve_unknowns(class->pool, classes, class)) {
-        class_free(class);
-        return NULL;
-    }
-
     printf("...and done!\n");
     return class;
 }
@@ -731,6 +726,14 @@ bool classes_add_class(Classes *classes, Class *class)
     class->classes = classes;
     classes->classes = realloc(classes->classes, (sizeof(Class*) * (classes->count + 1)));
     classes->classes[classes->count++] = class;
+
+    // Resolve unknowns at the very end, so no circular dependencies can cause issues.
+    if (!class->built_in) {
+        if (!constant_pool_resolve_unknowns(class->pool, classes, class)) {
+            class_free(class);
+            return false;
+        }
+    }
 
     return true;
 }
