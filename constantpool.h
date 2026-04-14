@@ -95,7 +95,7 @@ extern const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t ind
 extern const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index);
 extern const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
 extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
-extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class *parent);
+extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Class *parent);
 
 extern ConstantPool *constant_pool_new(Reader *reader);
 extern void constant_pool_free(ConstantPool *pool);

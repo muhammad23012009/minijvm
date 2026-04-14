@@ -82,7 +82,7 @@ int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
 }
 
 /* I am not proud of this code... Need to find a better way to resolve classes */
-bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class *parent)
+bool constant_pool_resolve_unknowns(ConstantPool *pool, Class *parent)
 {
     for (int i = 1; i < pool->count; i++) {
         ConstantPoolInfo *info = &pool->pool[i];
@@ -109,14 +109,14 @@ bool constant_pool_resolve_unknowns(ConstantPool *pool, Classes *classes, Class 
                     ptr[strlen(class_name) - 1] = '\0';
                 }
 
-                if (classes_get_class(classes, class_name))
+                if (classes_get_class(class_name))
                     continue;
 
                 printf("Found unknown class %s, will try to resolve.\n", class_name);
 
                 snprintf(class_path, 2048, "%s%s", class_name, ".class");
 
-                if (!classes_add_class(classes, class_parse_file(classes, class_path))) {
+                if (!classes_add_class(class_parse_file(class_path))) {
                     fprintf(stderr, "Failed to resolve dependencies!\n");
                     return false;
                 }

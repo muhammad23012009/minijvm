@@ -88,8 +88,8 @@ typedef struct Classes {
     Class *main_class;
 } Classes;
 
-extern Class *class_parse_file(Classes *classes, char *filename);
-extern Class *class_create_builtin(char *name, builtins *class_builtins, Classes *classes);
+extern Class *class_parse_file(char *filename);
+extern Class *class_create_builtin(char *name, builtins *class_builtins);
 extern void class_initialize_static(Class *class);
 extern void class_free(Class *class);
 
@@ -97,14 +97,14 @@ extern Method *class_get_method(Class *class, const char *name, const char *desc
 extern Method *class_get_method_from_index(Class *class, uint16_t index);
 extern Field *class_get_static_field(Class *class, const char *name);
 
-extern bool classes_add_class(Classes *classes, Class *class);
-extern Class *classes_get_class(Classes *classes, const char *name);
-extern Class *classes_get_class_from_index(Classes *classes, ConstantPool *pool, uint16_t index);
+extern bool classes_add_class(Class *class);
+extern Class *classes_get_class(const char *name);
+extern Class *classes_get_class_from_index(ConstantPool *pool, uint16_t index);
 
-extern Method *classes_get_main_method(Classes *classes);
+extern Method *classes_get_main_method();
 
-extern Classes *classes_new();
-extern void classes_free(Classes *classes);
+extern void classes_new();
+extern void classes_free();
 
 extern void method_execute(Method *method, Frame *frame);
 

@@ -44,28 +44,30 @@ int main(int argc, char *argv[])
     char filename[2048];
     snprintf(filename, 2048, "%s%s", argv[1], ".class");
 
-    Classes *classes = classes_new();
+    classes_new();
 
     /* Setup built-in classes and methods */
-    classes_add_class(classes, class_create_builtin("java/lang/Object", &java_lang_Object_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/util/Objects", &java_util_Objects_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/lang/System", &java_lang_System_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/lang/String", &java_lang_String_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/lang/Class", &java_lang_Class_builtins, classes));
-    classes_add_class(classes, class_create_builtin("java/lang/invoke/StringConcatFactory", &java_lang_invoke_StringConcatFactory_builtins, classes));
+    classes_add_class(class_create_builtin("java/lang/Object", &java_lang_Object_builtins));
+    classes_add_class(class_create_builtin("java/util/Objects", &java_util_Objects_builtins));
+    classes_add_class(class_create_builtin("java/lang/System", &java_lang_System_builtins));
+    classes_add_class(class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins));
+    classes_add_class(class_create_builtin("java/lang/String", &java_lang_String_builtins));
+    classes_add_class(class_create_builtin("java/lang/Class", &java_lang_Class_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/StringConcatFactory", &java_lang_invoke_StringConcatFactory_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandles$Lookup", &java_lang_invoke_MethodHandles_lookup_builtins)); /* TODO: implement builtins for this class */
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandle", &java_lang_invoke_MethodHandle_builtins)); /* TODO: implement builtins for this class */
 
-    if (!classes_add_class(classes, class_parse_file(classes, filename))) {
-        classes_free(classes);
+    if (!classes_add_class(class_parse_file(filename))) {
+        classes_free();
         return 1;
     }
 
     printf("miniJVM: all classes processed!\n");
 
-    Method *main_method = classes_get_main_method(classes);
+    Method *main_method = classes_get_main_method();
     if (!main_method) {
         fprintf(stderr, "Failed to find main method. Exiting!\n");
-        classes_free(classes);
+        classes_free();
         return 1;
     }
 
@@ -74,7 +76,7 @@ int main(int argc, char *argv[])
 
     method_execute(main_method, main_frame);
 
-    classes_free(classes);
+    classes_free();
     frame_free(main_frame);
     gc_free();
 

@@ -21,7 +21,7 @@
 /* Maintain a list of Class's with their java/lang/Class objects */
 Object *java_lang_Object_getClass(Object *this)
 {
-    Object *cobj = object_new(classes_get_class(this->class->classes, "java/lang/Class"));
+    Object *cobj = object_new(classes_get_class("java/lang/Class"));
     object_get_field(cobj, "class")->value.data.class = this->class;
     return cobj;
 }

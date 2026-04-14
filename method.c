@@ -36,6 +36,8 @@
  * ...etc
  */
 
+static Classes *s_classes;
+
 #define DISPATCH()          \
     ++frame->pc;            \
     op = data[frame->pc];   \
@@ -215,7 +217,7 @@ void method_execute(Method *method, Frame *frame)
 
         switch (tag) {
             case CONSTANT_CLASS: {
-                Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+                Class *class = classes_get_class_from_index(pool, index);
                 variant.data.class = class;
                 variant.type = VARIANT_TYPE_CLASS;
                 break;
@@ -228,7 +230,7 @@ void method_execute(Method *method, Frame *frame)
             }
 
             case CONSTANT_STRING: {
-                Object *str_obj = object_new(classes_get_class(method->class->classes, "java/lang/String"));
+                Object *str_obj = object_new(classes_get_class("java/lang/String"));
                 object_get_field(str_obj, "value")->value.data.ref = constant_pool_resolve_string(pool, index);
                 variant.data.object = str_obj;
                 variant.type = VARIANT_TYPE_OBJECT;
@@ -394,7 +396,7 @@ void method_execute(Method *method, Frame *frame)
 
     getstatic: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         if (class->fields->static_fields_count && !class->static_initialized) {
             class_initialize_static(class);
         }
@@ -408,7 +410,7 @@ void method_execute(Method *method, Frame *frame)
 
     putstatic: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         /* Check if the class has been initialized yet. */
         if (class->fields->static_fields_count && !class->static_initialized) {
             class_initialize_static(class);
@@ -451,14 +453,14 @@ void method_execute(Method *method, Frame *frame)
 
     invokevirtual: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         Method *class_method = get_method(pool, class, index);
 
         Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
 
         int arguments_count = class_method->descriptors->arguments_count;
 
-        for (int i = 1; i <= arguments_count; i++) {
+        for (int i = arguments_count; i != 0; i--) {
             Variant item = stack_pop(frame->stack);
             subframe->locals[i] = item;
         }
@@ -493,7 +495,7 @@ void method_execute(Method *method, Frame *frame)
          */
 
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         Method *class_method = get_method(pool, class, index);
 
         Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
@@ -538,7 +540,7 @@ void method_execute(Method *method, Frame *frame)
 
     new: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         Object *object = object_new(class);
         stack_push_object(frame->stack, object);
         DISPATCH();
@@ -546,7 +548,7 @@ void method_execute(Method *method, Frame *frame)
 
     anewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(method->class->classes, pool, index);
+        Class *class = classes_get_class_from_index(pool, index);
         printf("Creating new array of class %s\n", class->name);
 
         int count = stack_pop(frame->stack).data.int_val;
@@ -565,7 +567,7 @@ void method_execute(Method *method, Frame *frame)
 }
 
 /* Class/methods code */
-Class *class_parse_file(Classes *classes, char *filename)
+Class *class_parse_file(char *filename)
 {
     Class *class = malloc(sizeof(Class));
     Method *static_init = NULL;
@@ -605,7 +607,7 @@ Class *class_parse_file(Classes *classes, char *filename)
     class->flags = reader_read_uint16_be(reader);
     class->name = constant_pool_resolve_string(class->pool, reader_read_uint16_be(reader));
     /* TODO: Handle parents later */
-    class->parent = classes_get_class(classes, constant_pool_resolve_string(class->pool, reader_read_uint16_be(reader)));
+    class->parent = classes_get_class(constant_pool_resolve_string(class->pool, reader_read_uint16_be(reader)));
 
     printf("some basic information...\n");
 
@@ -665,7 +667,7 @@ void class_free(Class *class)
 /* Built-in classes will have no constant pools or any other associated
  * properties set. They will only contains a name and methods.
 */
-Class *class_create_builtin(char *name, builtins *class_builtins, Classes *classes)
+Class *class_create_builtin(char *name, builtins *class_builtins)
 {
     Class *class = malloc(sizeof(Class));
     memset(class, 0, sizeof(Class));
@@ -673,7 +675,7 @@ Class *class_create_builtin(char *name, builtins *class_builtins, Classes *class
     class->name = name;
 
     if (class_builtins->parent)
-        class->parent = classes_get_class(classes, class_builtins->parent);
+        class->parent = classes_get_class(class_builtins->parent);
 
     class->methods_count = class_builtins->methods_length;
     class->methods = methods_new_builtin(class, class_builtins);
@@ -718,18 +720,18 @@ Method *class_get_method_from_index(Class *class, uint16_t index)
     return class_get_method(class, name, descriptor);
 }
 
-bool classes_add_class(Classes *classes, Class *class)
+bool classes_add_class(Class *class)
 {
-    if (!classes || !class)
+    if (!s_classes || !class)
         return false;
 
-    class->classes = classes;
-    classes->classes = realloc(classes->classes, (sizeof(Class*) * (classes->count + 1)));
-    classes->classes[classes->count++] = class;
+    class->classes = s_classes;
+    s_classes->classes = realloc(s_classes->classes, (sizeof(Class*) * (s_classes->count + 1)));
+    s_classes->classes[s_classes->count++] = class;
 
     // Resolve unknowns at the very end, so no circular dependencies can cause issues.
     if (!class->built_in) {
-        if (!constant_pool_resolve_unknowns(class->pool, classes, class)) {
+        if (!constant_pool_resolve_unknowns(class->pool, class)) {
             class_free(class);
             return false;
         }
@@ -738,13 +740,13 @@ bool classes_add_class(Classes *classes, Class *class)
     return true;
 }
 
-Class *classes_get_class(Classes *classes, const char *name)
+Class *classes_get_class(const char *name)
 {
-    if (!classes || !name)
+    if (!s_classes || !name)
         return NULL;
 
-    for (int i = 0; i < classes->count; i++) {
-        Class *class = classes->classes[i];
+    for (int i = 0; i < s_classes->count; i++) {
+        Class *class = s_classes->classes[i];
         if (!strcmp(class->name, name))
             return class;
     }
@@ -753,22 +755,22 @@ Class *classes_get_class(Classes *classes, const char *name)
 }
 
 /* TODO: Fix this method */
-Class *classes_get_class_from_index(Classes *classes, ConstantPool *pool, uint16_t index)
+Class *classes_get_class_from_index(ConstantPool *pool, uint16_t index)
 {
     const char *name = constant_pool_resolve_class_name(pool, index);
-    return classes_get_class(classes, name);
+    return classes_get_class(name);
 }
 
-Method *classes_get_main_method(Classes *classes)
+Method *classes_get_main_method()
 {
-    for (int i = 0; i < classes->count; i++) {
-        Class *class = classes->classes[i];
+    for (int i = 0; i < s_classes->count; i++) {
+        Class *class = s_classes->classes[i];
         for (int j = 0; j < class->methods_count; j++) {
             Method *method = &class->methods[j];
             if (!strcmp(method->name, "main")) {
                 // We found the main method. Great. Mark this as our main class.
                 printf("Found method main in class %s\n", class->name);
-                classes->main_class = class;
+                s_classes->main_class = class;
                 return &class->methods[j];
             }
         }
@@ -777,21 +779,19 @@ Method *classes_get_main_method(Classes *classes)
     return NULL;
 }
 
-Classes *classes_new()
+void classes_new()
 {
-    Classes *classes = malloc(sizeof(Classes));
-    classes->count = 0;
-    classes->classes = NULL;
-
-    return classes;
+    s_classes = malloc(sizeof(Classes));
+    s_classes->count = 0;
+    s_classes->classes = NULL;
 }
 
-void classes_free(Classes *classes)
+void classes_free()
 {
-    for (int i = 0; i < classes->count; i++) {
-        Class *class = classes->classes[i];
+    for (int i = 0; i < s_classes->count; i++) {
+        Class *class = s_classes->classes[i];
         class_free(class);
     }
-    free(classes->classes);
-    free(classes);
+    free(s_classes->classes);
+    free(s_classes);
 }

@@ -20,7 +20,7 @@
 
 void java_lang_System_clinit(Class *this)
 {
-    Class *printstream = classes_get_class(this->classes, "java/io/PrintStream");
+    Class *printstream = classes_get_class("java/io/PrintStream");
     Field *field = class_get_static_field(this, "out");
     field->value.data.object = object_new(printstream);
     field->value.data.object->parent_field = field;
