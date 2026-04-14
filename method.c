@@ -131,6 +131,10 @@ void call_native_method(Method *method, Frame *frame)
                 av_int(list, frame->locals[j].data.int_val);
             case DESCRIPTOR_OBJECT:
                 av_ptr(list, Object *, frame->locals[j].data.object);
+            case DESCRIPTOR_CHAR:
+                av_short(list, frame->locals[j].data.int_val);
+            case DESCRIPTOR_VOID:
+                break;
         }
         j++;
     }

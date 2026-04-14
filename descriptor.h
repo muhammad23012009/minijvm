@@ -15,6 +15,7 @@ typedef enum {
     DESCRIPTOR_VOID,
     DESCRIPTOR_INT,
     DESCRIPTOR_OBJECT,
+    DESCRIPTOR_CHAR,
 } DescriptorType;
 
 typedef struct Descriptor {

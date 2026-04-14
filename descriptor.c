@@ -63,6 +63,9 @@ Descriptor parse_descriptor(const char **string, const char *end)
             descriptor.type = DESCRIPTOR_INT;
             break;
         }
+        case 'C':
+            descriptor.type = DESCRIPTOR_CHAR;
+            break;
         case 'L': {
             /* Object type */
             descriptor.type = DESCRIPTOR_OBJECT;
