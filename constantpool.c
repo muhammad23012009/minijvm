@@ -142,6 +142,7 @@ ConstantPool *constant_pool_new(Reader *reader)
                 cp_info->byte_ref.length = reader_read_uint16_be(reader);
                 cp_info->byte_ref.bytes = malloc(cp_info->byte_ref.length);
                 reader_read_bytes(reader, cp_info->byte_ref.bytes, cp_info->byte_ref.length);
+                cp_info->byte_ref.bytes[cp_info->byte_ref.length] = '\0';
                 break;
             case CONSTANT_INT:
                 cp_info->int_val = reader_read_uint32_be(reader);
