@@ -45,7 +45,8 @@ Object *object_new(Class *class)
     /* Parse all fields in the class */
     if (class->fields && class->fields->fields_count > 0) {
         object->fields_count = class->fields->fields_count;
-        object->fields = class->fields->fields;
+        object->fields = malloc(sizeof(Field) * object->fields_count);
+        memcpy(object->fields, class->fields->fields, sizeof(Field) * object->fields_count);
     } else {
         object->fields_count = 0;
         object->fields = NULL;
@@ -57,5 +58,7 @@ Object *object_new(Class *class)
 
 void object_free(Object *object)
 {
+    // The class will actually free the relevant fields, we just need to free the copy we took.
+    free(object->fields);
     free(object);
 }
