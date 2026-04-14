@@ -5,6 +5,7 @@ static GarbageCollector *gc = NULL;
 
 /* TODO:
  * Add a custom allocator so we can detect allocated objects more efficiently
+ * Match static objects with their classes, so we can free them when the class is unloaded
  * Add support for custom heap size and object thresholds
  * Implement proper mark-and-sweep algorithm
  * Implement a hashmap to track objects and frames for faster lookups
@@ -123,6 +124,19 @@ static void mark_object_in_frame(struct list_head *obj_node, struct list_head **
 static void free_unmarked_object(struct list_head *obj_node, struct list_head **head, void *user)
 {
     Object *object = (Object *)obj_node->value;
+    if (object->parent_field && object->parent_field->info.access_flags & 0x0008) {
+        return;
+    }
+
+    printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
+    steal_list_node(head, obj_node);
+    object_free(object);
+    free(obj_node);
+}
+
+static void free_all_unmarked_object(struct list_head *obj_node, struct list_head **head, void *user)
+{
+    Object *object = (Object *)obj_node->value;
     printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
     steal_list_node(head, obj_node);
     object_free(object);
@@ -148,7 +162,7 @@ static void find_object_in_other_frames(struct list_head *obj_node, struct list_
     }
 
     /* Not found in any other frame, safe to free */
-    printf("Did not find object of class %s with pointer %p in other frames, freeing it\n", object->class->name, (void*)object);
+    //printf("Did not find object of class %s with pointer %p in other frames, freeing it\n", object->class->name, (void*)object);
     steal_list_node(head, obj_node);
     object_free(object);
     free(obj_node);
@@ -210,8 +224,8 @@ void gc_free()
 {
     /* Free everything */
     printf("Freeing garbage collector\n");
-    foreach_list_node(&gc->tracked_objects, NULL, free_unmarked_object);
-    foreach_list_node(&gc->marked_objects, NULL, free_unmarked_object);
+    foreach_list_node(&gc->tracked_objects, NULL, free_all_unmarked_object);
+    foreach_list_node(&gc->marked_objects, NULL, free_all_unmarked_object);
 
     free(gc);
 }

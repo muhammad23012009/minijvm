@@ -31,6 +31,8 @@ typedef struct Field Field;
 
 typedef struct Object {
     Class *class;
+    // The field which contains this object, will be set once we get to putfield or putstatic
+    Field* parent_field;
     bool initialized;
 
     uint16_t fields_count;

@@ -40,6 +40,7 @@ Object *object_new(Class *class)
     Object *object = malloc(sizeof(Object));
     object->class = class;
     object->initialized = false;
+    object->parent_field = NULL;
 
     /* Parse all fields in the class */
     if (class->fields && class->fields->fields_count > 0) {

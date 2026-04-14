@@ -418,6 +418,9 @@ void method_execute(Method *method, Frame *frame)
 
         /* TODO: Implement value conversion */
         field->value = stack_pop(frame->stack);
+        if (field->value.type == VARIANT_TYPE_OBJECT) {
+            field->value.data.object->parent_field = field;
+        }
         DISPATCH();
     }
 
@@ -440,6 +443,9 @@ void method_execute(Method *method, Frame *frame)
         Field *field = object_get_field(object, field_name);
 
         field->value = value;
+        if (value.type == VARIANT_TYPE_OBJECT) {
+            value.data.object->parent_field = field;
+        }
         DISPATCH();
     }
 
