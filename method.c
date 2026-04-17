@@ -99,7 +99,7 @@ void call_native_method(Method *method, Frame *frame)
     /* Convert all of the arguments from the method's descriptors to native arguments */
     av_alist list;
     Variant return_value;
-    int j = 1;
+    int j = 0;
 
     if (!strcmp(method->name, "<clinit>")) {
         /* Static initializer */
@@ -113,29 +113,37 @@ void call_native_method(Method *method, Frame *frame)
     {
         case DESCRIPTOR_VOID:
             av_start_void(list, (void(*)())method->native_method);
+            break;
         case DESCRIPTOR_INT:
             av_start_int(list, (int(*)())method->native_method, &return_value.data.int_val);
             return_value.type = VARIANT_TYPE_INT;
+            break;
         case DESCRIPTOR_OBJECT:
             av_start_ptr(list, (Object*(*)())method->native_method, Object *, &return_value.data.object);
             return_value.type = VARIANT_TYPE_OBJECT;
+            break;
     }
 
     /* If the function isn't static, push the "this" pointer */
-    if (!(method->info.access_flags & 0x0008))
-        av_ptr(list, Object *, frame->locals[0].data.object);
+    if (!(method->info.access_flags & 0x0008)) {
+        av_ptr(list, Object *, frame->locals[j++].data.object);
+    }
 
     FOREACH_DESCRIPTOR(method->descriptors) {
         switch (descriptor.type) {
             case DESCRIPTOR_INT:
                 av_int(list, frame->locals[j].data.int_val);
+                break;
             case DESCRIPTOR_OBJECT:
                 av_ptr(list, Object *, frame->locals[j].data.object);
+                break;
             case DESCRIPTOR_CHAR:
                 av_short(list, frame->locals[j].data.int_val);
+                break;
             case DESCRIPTOR_VOID:
                 break;
         }
+
         j++;
     }
 
