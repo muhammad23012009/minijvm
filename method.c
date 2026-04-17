@@ -667,12 +667,13 @@ void class_free(Class *class)
 {
     if (!class->built_in) {
         attributes_free(class->attributes);
-        fields_free(class->fields);
-        methods_free(class->methods, class->methods_count);
         constant_pool_free(class->pool);
         free(class->reader);
         free(class->data);
     }
+
+    fields_free(class->fields);
+    methods_free(class->methods, class->methods_count);
     free(class);
 }
 
