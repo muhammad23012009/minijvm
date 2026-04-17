@@ -68,13 +68,11 @@ Descriptor parse_descriptor(const char **string, const char *end)
             break;
         case 'L': {
             /* Object type */
+            char* obj_end = strchr(*string, ';');
             descriptor.type = DESCRIPTOR_OBJECT;
-            descriptor.object_name = strndup(++*string, end - *string - 1);
+            descriptor.object_name = strndup(++*string, obj_end - *string);
             /* Skip the entire string */
-            if (!(*string = strchr(*string, ';'))) {
-                *string = NULL;
-            }
-            *string++;
+            *string = obj_end + 1;
             break;
         }
         default: {
@@ -85,7 +83,7 @@ Descriptor parse_descriptor(const char **string, const char *end)
         }
     }
 
-    *string++;
+    (void)*string++;
     return descriptor;
 }
 
