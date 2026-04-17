@@ -140,7 +140,7 @@ ConstantPool *constant_pool_new(Reader *reader)
         switch (cp_info->tag) {
             case CONSTANT_UTF8:
                 cp_info->byte_ref.length = reader_read_uint16_be(reader);
-                cp_info->byte_ref.bytes = malloc(cp_info->byte_ref.length);
+                cp_info->byte_ref.bytes = malloc(cp_info->byte_ref.length + 1);
                 reader_read_bytes(reader, cp_info->byte_ref.bytes, cp_info->byte_ref.length);
                 cp_info->byte_ref.bytes[cp_info->byte_ref.length] = '\0';
                 break;
