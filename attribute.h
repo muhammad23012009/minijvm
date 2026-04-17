@@ -43,11 +43,11 @@ typedef struct AttributeInfo {
         } CodeAttribute;
 
         struct {
-            uint8_t num_bootstrap_methods;
+            uint16_t num_bootstrap_methods;
             struct {
-                uint8_t bootstrap_method_ref;
-                uint8_t num_bootstrap_arguments;
-                uint8_t *bootstrap_arguments;
+                uint16_t bootstrap_method_ref;
+                uint16_t num_bootstrap_arguments;
+                uint16_t *bootstrap_arguments;
             } *bootstrap_methods;
         } BootstrapMethodsAttribute;
 
