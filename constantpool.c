@@ -167,14 +167,12 @@ ConstantPool *constant_pool_new(Reader *reader)
                 break;
             case CONSTANT_DYNAMIC_INFO:
             case CONSTANT_INVOKEDYNAMIC:
-                uint16_t bootstrap_index = reader_read_uint16_be(reader);
-                uint16_t name_and_type_info = reader_read_uint16_be(reader);
-                printf("testing!, bootstrap index: %d, name-and-type: %d\n", bootstrap_index, name_and_type_info);
+                cp_info->dynamic_info.bootstrap_index = reader_read_uint16_be(reader);
+                cp_info->dynamic_info.name_and_type_info = reader_read_uint16_be(reader);
                 break;
-            case 0xF:
-                uint8_t ref_kind = reader_read_uint8(reader);
-                uint16_t ref_index = reader_read_uint16_be(reader);
-                printf("got method handle! kind is %d, index is %d\n", ref_kind, ref_index);
+            case CONSTANT_METHODHANDLE:
+                cp_info->method_handle_info.ref_kind = reader_read_uint8(reader);
+                cp_info->method_handle_info.ref_index = reader_read_uint16_be(reader);
                 break;
             default:
                 printf("Unknown constant pool type 0x%x!\n", cp_info->tag);

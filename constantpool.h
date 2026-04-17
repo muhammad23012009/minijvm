@@ -32,6 +32,7 @@
 #define CONSTANT_STRING     0x08
 #define CONSTANT_FIELDREF   0x09
 #define CONSTANT_METHODREF  0x0A
+#define CONSTANT_METHODHANDLE   0x0F
 #define CONSTANT_NAMEANDTYPE    0x0C
 #define CONSTANT_DYNAMIC_INFO   0x11
 #define CONSTANT_INVOKEDYNAMIC  0x12
@@ -74,6 +75,16 @@ typedef struct ConstantPoolInfo {
             uint16_t name_index;
             uint16_t descriptor_index;
         } name_and_type_info;
+
+        struct {
+            uint16_t bootstrap_index;
+            uint16_t name_and_type_info;
+        } dynamic_info;
+
+        struct {
+            uint8_t ref_kind;
+            uint16_t ref_index;
+        } method_handle_info;
     };
 } ConstantPoolInfo;
 
