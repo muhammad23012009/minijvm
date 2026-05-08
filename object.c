@@ -56,8 +56,12 @@ Object *object_new(Class *class)
     /* Parse all fields in the class */
     if (class->fields && class->fields->fields_count > 0) {
         object->fields_count = class->fields->fields_count;
-        object->fields = malloc(sizeof(Field) * object->fields_count);
+        object->fields = calloc(object->fields_count, sizeof(Field));
         memcpy(object->fields, class->fields->fields, sizeof(Field) * object->fields_count);
+
+        for (int i = 0; i < object->fields_count; i++) {
+            object->fields[i].value = (Variant){0};
+        }
     } else {
         object->fields_count = 0;
         object->fields = NULL;
@@ -69,6 +73,10 @@ Object *object_new(Class *class)
 
 void object_free(Object *object)
 {
+    for (int i = 0; i < object->fields_count; i++) {
+        variant_release(&object->fields[i].value);
+    }
+
     // The class will actually free the relevant fields, we just need to free the copy we took.
     free(object->fields);
     free(object);
