@@ -14,5 +14,6 @@ typedef struct Array {
 
 extern Array *array_new(Class *c, int count);
 extern void array_set_value(Array *array, int index, Variant value);
+extern void array_free(Array *array);
 
 #endif

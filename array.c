@@ -9,12 +9,24 @@ Array *array_new(Class *c, int count)
     array->count = count;
     array->value = calloc(count, sizeof(Variant));
 
-    printf("Created new array of class %s with %d elements %p\n", c->name, count, array->value);
-
     return array;
 }
 
 void array_set_value(Array *array, int index, Variant value)
 {
+    variant_release(&array->value[index]);
     array->value[index] = value;
+}
+
+void array_free(Array *array)
+{
+    if (!array)
+        return;
+
+    for (int i = 0; i < array->count; i++) {
+        variant_release(&array->value[i]);
+    }
+
+    free(array->value);
+    free(array);
 }
