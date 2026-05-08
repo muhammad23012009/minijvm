@@ -20,21 +20,18 @@
 
 void stack_push(Stack *stack, Variant value)
 {
-    if (stack->head == NULL) {
-        stack->head = malloc(sizeof(StackItem));
-        stack->head->item = value;
-        stack->head->next = NULL;
-    } else {
-        StackItem *new_item = malloc(sizeof(StackItem));
-        new_item->item = value;
-        new_item->next = stack->head;
-        stack->head = new_item;
+    if (stack->top + 1 > stack->max_size) {
+        fprintf(stderr, "Stack overflow!\n");
+        exit(1);
     }
+
+    variant_acquire(&value);
+    stack->items[stack->top++] = value;
 }
 
 void stack_push_int(Stack *stack, int value)
 {
-    Variant variant;
+    Variant variant = {0};
     variant.type = VARIANT_TYPE_INT;
     variant.data.int_val = value;
     stack_push(stack, variant);
@@ -42,7 +39,7 @@ void stack_push_int(Stack *stack, int value)
 
 void stack_push_ref(Stack *stack, void *value)
 {
-    Variant variant;
+    Variant variant = {0};
     variant.type = VARIANT_TYPE_REF;
     variant.data.ref = value;
     stack_push(stack, variant);
@@ -50,7 +47,7 @@ void stack_push_ref(Stack *stack, void *value)
 
 void stack_push_object(Stack *stack, Object *value)
 {
-    Variant variant;
+    Variant variant = {0};
     variant.type = VARIANT_TYPE_OBJECT;
     variant.data.object = value;
     stack_push(stack, variant);
@@ -59,20 +56,13 @@ void stack_push_object(Stack *stack, Object *value)
 /* Takes the top item, and duplicates it */
 void stack_dup(Stack *stack)
 {
-    stack_push(stack, stack->head->item);
+    stack_push(stack, stack->items[stack->top - 1]);
 }
 
 Variant stack_pop(Stack *stack)
 {
-    Variant value;
-    if (!stack->head)
-        return value;
-
-    StackItem *old_head = stack->head;
-    stack->head = old_head->next;
-    value = old_head->item;
-    free(old_head);
-
+    Variant value = stack->items[--stack->top];
+    variant_release(&value);
     return value;
 }
 
@@ -81,19 +71,18 @@ Stack *stack_new(int max_size)
     Stack *stack = malloc(sizeof(Stack));
     /* The stack will hold at most `max_size` items */
     stack->max_size = max_size;
-    stack->head = NULL;
+    stack->items = calloc(max_size, sizeof(Variant));
+    stack->top = 0;
 
     return stack;
 }
 
 void stack_free(Stack *stack)
 {
-    for (StackItem *item = stack->head; item != NULL;) {
-        StackItem *next = item->next;
-
-        free(item);
-        item = next;
+    for (int i = 0; i < stack->top; i++) {
+        variant_release(&stack->items[i]);
     }
 
+    free(stack->items);
     free(stack);
 }
