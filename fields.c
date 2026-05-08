@@ -108,12 +108,20 @@ Method *methods_new(Class *class, Reader *reader, ConstantPool *pool, int *count
 
         method->name = method->info.name;
 
-        /* Parse Code attribute */
+        /* Parse Code attribute (if it exists) */
         AttributeInfo *code_attr = attributes_get_attribute(method->info.attributes, "Code");
-        method->data_length = code_attr->CodeAttribute.code_length;
-        method->data = code_attr->CodeAttribute.code;
-        method->max_stack = code_attr->CodeAttribute.max_stack;
-        method->max_local = code_attr->CodeAttribute.max_locals;
+        if (code_attr) {
+            method->data_length = code_attr->CodeAttribute.code_length;
+            method->data = code_attr->CodeAttribute.code;
+            method->max_stack = code_attr->CodeAttribute.max_stack;
+            method->max_local = code_attr->CodeAttribute.max_locals;
+        }
+
+        if (method->info.access_flags & ACC_NATIVE)
+        {
+            // We'll link this method when loading the native library.
+        }
+
         method->descriptors = descriptors_new(method->info.descriptor);
     }
 
@@ -152,7 +160,6 @@ Method *methods_new_builtin(Class *class, builtins *class_builtins)
 
 void methods_free(Method *methods, int count)
 {
-    printf("Freeing methods pointer %p with count %d\n", (void*)methods, count);
     if (!methods)
         return;
 

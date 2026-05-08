@@ -4,6 +4,16 @@
 #include <stdint.h>
 #include "builtins/builtins.h"
 
+#define ACC_PUBLIC       0x0001
+#define ACC_PRIVATE      0x0002
+#define ACC_PROTECTED    0x0004
+#define ACC_STATIC       0x0008
+#define ACC_FINAL        0x0010
+#define ACC_SYNCHRONIZED 0x0020
+#define ACC_BRIDGE       0x0040
+#define ACC_VARARGS      0x0080
+#define ACC_NATIVE       0x0100
+
 typedef struct Attributes Attributes;
 typedef struct ConstantPool ConstantPool;
 typedef struct Class Class;
