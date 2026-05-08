@@ -19,9 +19,13 @@
 #define MINIJVM_H
 
 #include <stdint.h>
+#include <jit/jit.h>
+
 #include "attribute.h"
 #include "constantpool.h"
 #include "method.h"
 #include "object.h"
+
+extern jit_context_t get_jit_context();
 
 #endif

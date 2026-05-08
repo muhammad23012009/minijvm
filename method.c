@@ -22,6 +22,7 @@
 #include "method.h"
 #include "object.h"
 #include "gc.h"
+#include "dynarr.h"
 
 /* TODO: 
  * Implement exceptions
@@ -37,6 +38,7 @@
  */
 
 static Classes *s_classes;
+static Method **s_dynamic_methods = NULL;
 
 #define DISPATCH()          \
     ++frame->pc;            \
@@ -62,9 +64,46 @@ void frame_free(Frame *frame)
 {
     gc_untrack_frame(frame);
 
+    for (int i = 0; i < frame->max_locals; i++) {
+        variant_release(&frame->locals[i]);
+    }
+
     stack_free(frame->stack);
     free(frame->locals);
     free(frame);
+}
+
+Method *add_dynamic_method_native(const char* name, const char* descriptor, jit_function_t function)
+{
+    Method *method = malloc(sizeof(Method));
+    memset(method, 0, sizeof(Method));
+    method->name = name;
+    method->descriptors = descriptors_new(descriptor);
+    method->class = NULL;
+    method->native_method = jit_function_to_closure(function);
+    // TODO: can this assumption be false?
+    method->info.access_flags = ACC_STATIC;
+
+    if (!s_dynamic_methods)
+    {
+        s_dynamic_methods = arr_init(Method*);
+    }
+
+    arr_push(s_dynamic_methods, method);
+    return method;
+}
+
+void destroy_dynamic_methods()
+{
+    if (!s_dynamic_methods)
+        return;
+
+    for (int i = 0; i < arr_length(s_dynamic_methods); ++i)
+    {
+        descriptors_free(s_dynamic_methods[i]->descriptors);
+        free(s_dynamic_methods[i]);
+    }
+    arr_free(s_dynamic_methods);
 }
 
 Method *get_method(ConstantPool *pool, Class *class, uint16_t index)
@@ -94,11 +133,53 @@ static inline VariantType descriptor_to_variant_type(DescriptorType type)
     }
 }
 
+static Variant resolve_bootstrap_argument(ConstantPool *pool, uint16_t index)
+{
+    switch (constant_pool_get_tag(pool, index))
+    {
+        case CONSTANT_CLASS:
+        {
+            Class *resolved_class = classes_get_class_from_index(pool, index);
+            Object *class_object = object_new(classes_get_class("java/lang/Class"));
+            object_get_field(class_object, "class")->value.data.class = resolved_class;
+            return variant_make_object(class_object);
+        }
+
+        case CONSTANT_INT:
+            return variant_make_int(constant_pool_resolve_int(pool, index));
+
+        case CONSTANT_STRING:
+        {
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
+            return variant_make_object(str_obj);
+        }
+
+        case CONSTANT_METHODTYPE:
+        {
+            Object *method_type = object_new(classes_get_class("java/lang/invoke/MethodType"));
+            object_set_field(method_type, "descriptor", variant_make_ref(constant_pool_resolve_field_descriptor(pool, index)));
+            return variant_make_object(method_type);
+        }
+
+        case CONSTANT_METHODHANDLE:
+        {
+            Object *method_handle = object_new(classes_get_class("java/lang/invoke/MethodHandle"));
+            return variant_make_object(method_handle);
+        }
+
+        default:
+            fprintf(stderr, "Unsupported bootstrap constant tag 0x%x at index %u\n",
+                    constant_pool_get_tag(pool, index), index);
+            return (Variant){0};
+    }
+}
+
 void call_native_method(Method *method, Frame *frame)
 {
     /* Convert all of the arguments from the method's descriptors to native arguments */
     av_alist list;
-    Variant return_value;
+    Variant return_value = (Variant){0};
     int j = 0;
 
     if (!strcmp(method->name, "<clinit>")) {
@@ -118,6 +199,10 @@ void call_native_method(Method *method, Frame *frame)
             av_start_int(list, (int(*)())method->native_method, &return_value.data.int_val);
             return_value.type = VARIANT_TYPE_INT;
             break;
+        case DESCRIPTOR_CHAR:
+            av_start_short(list, (short(*)())method->native_method, &return_value.data.int_val);
+            return_value.type = VARIANT_TYPE_INT;
+            break;
         case DESCRIPTOR_OBJECT:
             av_start_ptr(list, (Object*(*)())method->native_method, Object *, &return_value.data.object);
             return_value.type = VARIANT_TYPE_OBJECT;
@@ -130,6 +215,13 @@ void call_native_method(Method *method, Frame *frame)
     }
 
     FOREACH_DESCRIPTOR(method->descriptors) {
+        // If the current argument is an array, just pass the Array pointer
+        if (descriptor.array_dimesions_count > 0) {
+            av_ptr(list, Array *, frame->locals[j].data.ref);
+            j++;
+            continue;
+        }
+
         switch (descriptor.type) {
             case DESCRIPTOR_INT:
                 av_int(list, frame->locals[j].data.int_val);
@@ -156,14 +248,20 @@ call:
 
 void method_execute(Method *method, Frame *frame)
 {
-    printf("Beginning execution of method %s\n", method->name);
+    printf("Beginning execution of method %s in frame %p\n", method->name, (void*)frame);
     /* Access code of method */
     uint8_t *data = method->data;
     ConstantPool *pool = method->class->pool;
     uint8_t op;
 
     static void *opcodes[] = {
-        [2 ... 8] = &&iconst_x,
+        [2] = &&iconst_m1,
+        [3] = &&iconst_0,
+        [4] = &&iconst_1,
+        [5] = &&iconst_2,
+        [6] = &&iconst_3,
+        [7] = &&iconst_4,
+        [8] = &&iconst_5,
         [16] = &&bipush,
         [17] = &&sipush,
         [18] = &&ldc,
@@ -197,6 +295,7 @@ void method_execute(Method *method, Frame *frame)
         [187] = &&new,
         [189] = &&anewarray,
         [190] = &&arraylength,
+        [197] = &&multianewarray,
     };
 
     frame->pc = 0;
@@ -205,9 +304,38 @@ void method_execute(Method *method, Frame *frame)
     op = data[frame->pc];
     goto *opcodes[op];
 
-    iconst_x: {
-        int8_t const_int = op - 3;
-        stack_push_int(frame->stack, const_int);
+    iconst_m1: {
+        stack_push_int(frame->stack, -1);
+        DISPATCH();
+    }
+
+    iconst_0: {
+        stack_push_int(frame->stack, 0);
+        DISPATCH();
+    }
+
+    iconst_1: {
+        stack_push_int(frame->stack, 1);
+        DISPATCH();
+    }
+
+    iconst_2: {
+        stack_push_int(frame->stack, 2);
+        DISPATCH();
+    }
+
+    iconst_3: {
+        stack_push_int(frame->stack, 3);
+        DISPATCH();
+    }
+
+    iconst_4: {
+        stack_push_int(frame->stack, 4);
+        DISPATCH();
+    }
+
+    iconst_5: {
+        stack_push_int(frame->stack, 5);
         DISPATCH();
     }
 
@@ -225,7 +353,7 @@ void method_execute(Method *method, Frame *frame)
     ldc: {
         uint8_t index = data[++frame->pc];
         uint8_t tag = constant_pool_get_tag(pool, index);
-        Variant variant;
+        Variant variant = (Variant){0};
 
         switch (tag) {
             case CONSTANT_CLASS: {
@@ -243,7 +371,7 @@ void method_execute(Method *method, Frame *frame)
 
             case CONSTANT_STRING: {
                 Object *str_obj = object_new(classes_get_class("java/lang/String"));
-                object_get_field(str_obj, "value")->value.data.ref = constant_pool_resolve_string(pool, index);
+                object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
                 variant.data.object = str_obj;
                 variant.type = VARIANT_TYPE_OBJECT;
                 break;
@@ -454,11 +582,10 @@ void method_execute(Method *method, Frame *frame)
         Object *object = stack_pop(frame->stack).data.object;
 
         const char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
-        Field *field = object_get_field(object, field_name);
+        object_set_field(object, field_name, value);
 
-        field->value = value;
         if (value.type == VARIANT_TYPE_OBJECT) {
-            value.data.object->parent_field = field;
+            value.data.object->parent_field = object_get_field(object, field_name);
         }
         DISPATCH();
     }
@@ -547,6 +674,120 @@ void method_execute(Method *method, Frame *frame)
     }
 
     invokedynamic: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        frame->pc += 2; /* Skip the two bytes of zeroes */
+
+        ConstantPoolInfo *info = &pool->pool[index];
+        Method *dynamic_method = NULL;
+
+        // Check if a dynamic method has already been linked for this invokedynamic instruction.
+        for (int i = 0; s_dynamic_methods && i < arr_length(s_dynamic_methods); ++i) {
+            dynamic_method = s_dynamic_methods[i];
+            if (i == info->dynamic_info.bootstrap_index &&
+                !strcmp(dynamic_method->name, constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info)) &&
+                !strcmp(dynamic_method->descriptors->descriptor, constant_pool_resolve_field_descriptor(pool, info->dynamic_info.name_and_type_info))) {
+                // If we find a matching dynamic method, just execute it.
+                printf("Found existing dynamic method %s with descriptor %s for invokedynamic instruction at index %u, executing it\n",
+                       dynamic_method->name, dynamic_method->descriptors->descriptor, index);
+                goto execute_dynamic_method;
+            }
+        }
+
+        dynamic_method = NULL;
+
+        AttributeInfo *bootstrap_methods = attributes_get_attribute(method->class->attributes, "BootstrapMethods");
+        uint16_t bootstrap_index = info->dynamic_info.bootstrap_index;
+        uint16_t bootstrap_arguments_count = bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].num_bootstrap_arguments;
+        info = &pool->pool[bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].bootstrap_method_ref];
+
+        uint16_t ref_index = info->method_handle_info.ref_index;
+        uint16_t ref_kind = info->method_handle_info.ref_kind;
+
+        info = &pool->pool[index];
+
+        // Try to resolve this dynamic method now.
+        Class *class = classes_get_class_from_index(pool, ref_index);
+        Method *class_method = get_method(pool, class, ref_index);
+        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
+
+        Object *method_string = object_new(classes_get_class("java/lang/String"));
+        Object *lookup = object_new(classes_get_class("java/lang/invoke/MethodHandles$Lookup"));
+
+        // Create a MethodType from the NameAndType
+        Object* method_type = object_new(classes_get_class("java/lang/invoke/MethodType"));
+        const char* field_descriptor = constant_pool_resolve_field_descriptor(pool, info->dynamic_info.name_and_type_info);
+        object_set_field(method_type, "descriptor", variant_make_ref(field_descriptor));
+        object_set_field(method_string, "value", variant_make_ref(constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info)));
+
+        // Prepare the arguments for the bootstrap method.
+        int i = !(class_method->info.access_flags & 0x0008); // If the method is static, we don't push the "this" pointer, otherwise we do.
+
+        // First argument is a reference to MethodHandles.Lookup object, obtained as by calling MethodHandles.lookup().
+        subframe->locals[i++] = variant_make_object(lookup);
+
+        // Second argument is a reference to a string containing the name of the method to be linked, obtained from the constant pool.
+        subframe->locals[i++] = variant_make_object(method_string);
+
+        // Third argument is a reference to a MethodType object representing the type of this method, obtained while resolving the bootstrap method.
+        subframe->locals[i++] = variant_make_object(method_type);
+
+        // And finally, now we push the bootstrap arguments according to the bootstrap method descriptor.
+        uint16_t remaining_bootstrap_arguments = bootstrap_arguments_count;
+        uint16_t bootstrap_argument_cursor = 0;
+
+        for (int j = 3; j < class_method->descriptors->arguments_count; j++) {
+            Descriptor *descriptor = &class_method->descriptors->arguments[j];
+
+            // Only the last argument can be a vaargs array.
+            if (descriptor->array_dimesions_count > 0 && j == class_method->descriptors->arguments_count - 1) {
+                Array *args_array = array_new(classes_get_class("java/lang/Object"), remaining_bootstrap_arguments);
+
+                for (uint16_t k = 0; k < remaining_bootstrap_arguments; k++) {
+                    uint16_t bootstrap_argument_index = bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].bootstrap_arguments[bootstrap_argument_cursor++];
+                    array_set_value(args_array, k, resolve_bootstrap_argument(pool, bootstrap_argument_index));
+                }
+
+                subframe->locals[i++] = variant_make_ref(args_array);
+                remaining_bootstrap_arguments = 0;
+                continue;
+            }
+
+            if (bootstrap_argument_cursor >= bootstrap_arguments_count) {
+                fprintf(stderr, "Bootstrap method descriptor expects more arguments than the BootstrapMethods entry provides\n");
+                break;
+            }
+
+            uint16_t bootstrap_argument_index = bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].bootstrap_arguments[bootstrap_argument_cursor++];
+            subframe->locals[i++] = resolve_bootstrap_argument(pool, bootstrap_argument_index);
+            remaining_bootstrap_arguments--;
+        }
+
+        // Finally, call the method.
+        if (class->built_in) {
+            call_native_method(class_method, subframe);
+        } else {
+            method_execute(class_method, subframe);
+        }
+
+        // Now we've received a CallSite object. Link the target method handle.
+        Object *callsite = stack_pop(subframe->stack).data.object;
+        Object *target_method_handle = object_get_field(callsite, "target")->value.data.object;
+        dynamic_method = add_dynamic_method_native(constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info),
+                                                   constant_pool_resolve_field_descriptor(pool, info->dynamic_info.name_and_type_info),
+                                                   object_get_field(target_method_handle, "method")->value.data.ref);
+        frame_free(subframe);
+
+    execute_dynamic_method:
+
+        // Now we can *finally* execute the dynamic method/field.
+        Frame *dynamic_frame = frame_new(1, dynamic_method->descriptors->arguments_count);
+        for (int j = dynamic_method->descriptors->arguments_count - 1; j >= 0; j--) {
+            dynamic_frame->locals[j] = stack_pop(frame->stack);
+        }
+        call_native_method(dynamic_method, dynamic_frame);
+        stack_push(frame->stack, stack_pop(dynamic_frame->stack));
+        frame_free(dynamic_frame);
+
         DISPATCH();
     }
 
@@ -575,6 +816,10 @@ void method_execute(Method *method, Frame *frame)
         stack_push_int(frame->stack, array->count);
 
         DISPATCH();
+    }
+
+    multianewarray: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];        
     }
 }
 

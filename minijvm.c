@@ -24,15 +24,24 @@
 #include "reader.h"
 #include "builtins/builtins.h"
 #include "gc.h"
+#include "dynarr.h"
+
+static jit_context_t s_jit_context;
+void destroy_dynamic_methods();
 
 static char *help_text = "miniJVM: a stupidly simple JVM. \n\
 Usage: ./miniJVM <class name>\n";
+
+jit_context_t get_jit_context()
+{
+    return s_jit_context;
+}
 
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
         fprintf(stderr, "miniJVM: invalid arguments!\n");
-        fprintf(stderr, help_text);
+        fprintf(stderr, "%s", help_text);
         return 1;
     }
 
@@ -40,6 +49,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "miniJVM: too many arguments!\n");
         return 1;
     }
+
+    // Setup JIT
+    s_jit_context = jit_context_create();
 
     char filename[2048];
     snprintf(filename, 2048, "%s%s", argv[1], ".class");
@@ -53,9 +65,12 @@ int main(int argc, char *argv[])
     classes_add_class(class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins));
     classes_add_class(class_create_builtin("java/lang/String", &java_lang_String_builtins));
     classes_add_class(class_create_builtin("java/lang/Class", &java_lang_Class_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/CallSite", &java_lang_invoke_CallSite_builtins));
     classes_add_class(class_create_builtin("java/lang/invoke/StringConcatFactory", &java_lang_invoke_StringConcatFactory_builtins));
-    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandles$Lookup", &java_lang_invoke_MethodHandles_lookup_builtins)); /* TODO: implement builtins for this class */
-    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandle", &java_lang_invoke_MethodHandle_builtins)); /* TODO: implement builtins for this class */
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandles", &java_lang_invoke_MethodHandles_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandles$Lookup", &java_lang_invoke_MethodHandles_lookup_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodHandle", &java_lang_invoke_MethodHandle_builtins));
+    classes_add_class(class_create_builtin("java/lang/invoke/MethodType", &java_lang_invoke_MethodType_builtins));
 
     if (!classes_add_class(class_parse_file(filename))) {
         classes_free();
@@ -76,9 +91,12 @@ int main(int argc, char *argv[])
 
     method_execute(main_method, main_frame);
 
+    destroy_dynamic_methods();
     classes_free();
     frame_free(main_frame);
     gc_free();
+
+    jit_context_destroy(s_jit_context);
 
     return 0;
 }

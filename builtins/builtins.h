@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include "../method.h"
 #include "../variant.h"
+#include "../array.h"
 
 /* TODO: 
  * Add proper support for fields
@@ -69,6 +70,14 @@ extern builtins java_io_PrintStream_builtins;
 extern builtins java_util_Objects_builtins;
 
 extern builtins java_lang_invoke_StringConcatFactory_builtins;
+extern builtins java_lang_invoke_CallSite_builtins;
+extern builtins java_lang_invoke_MethodHandles_lookup_builtins;
+extern builtins java_lang_invoke_MethodHandles_builtins;
+extern builtins java_lang_invoke_MethodHandle_builtins;
+extern builtins java_lang_invoke_MethodType_builtins;
+
+extern Object *java_lang_invoke_CallSite_create(jit_function_t target);
+extern Object *java_lang_invoke_MethodHandle_create(jit_function_t method);
 
 extern builtins java_lang_String_builtins;
 extern builtins java_lang_Class_builtins;
