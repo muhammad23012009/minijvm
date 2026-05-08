@@ -83,8 +83,8 @@ static bool find_object_in_frame(Frame *frame, Object *object)
     }
 
     /* Search stack next */
-    for (StackItem *item = frame->stack->head; item != NULL; item = item->next) {
-        Variant *stack_item = &item->item;
+    for (int i = 0; i < frame->max_stack; ++i) {
+        Variant *stack_item = &frame->stack->items[i];
         if (stack_item->type == VARIANT_TYPE_OBJECT && stack_item->data.object == object) {
             return true;
         }
@@ -110,7 +110,7 @@ static void mark_object_in_frame(struct list_head *obj_node, struct list_head **
         Frame *frame = (Frame *)current_frame_node->value;
 
         if (find_object_in_frame(frame, obj_node->value)) {
-            printf("Found object of class %s with pointer %p in frame %p, leaving it be\n", ((Object *)obj_node->value)->class->name, (void*)obj_node->value, (void*)frame);
+            //printf("Found object of class %s with pointer %p in frame %p, leaving it be\n", ((Object *)obj_node->value)->class->name, (void*)obj_node->value, (void*)frame);
             /* Mark this object */
             steal_list_node(head, obj_node);
             prepend_list_node(&gc->marked_objects, obj_node->value);
@@ -124,11 +124,12 @@ static void mark_object_in_frame(struct list_head *obj_node, struct list_head **
 static void free_unmarked_object(struct list_head *obj_node, struct list_head **head, void *user)
 {
     Object *object = (Object *)obj_node->value;
+    // TODO: get rid of this parent_field bullshit
     if (object->parent_field && object->parent_field->info.access_flags & 0x0008) {
         return;
     }
 
-    printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
+    //printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
     steal_list_node(head, obj_node);
     object_free(object);
     free(obj_node);
@@ -137,7 +138,7 @@ static void free_unmarked_object(struct list_head *obj_node, struct list_head **
 static void free_all_unmarked_object(struct list_head *obj_node, struct list_head **head, void *user)
 {
     Object *object = (Object *)obj_node->value;
-    printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
+    //printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
     steal_list_node(head, obj_node);
     object_free(object);
     free(obj_node);
@@ -193,17 +194,18 @@ void gc_untrack_frame(Frame *frame)
 
     foreach_list_node(&gc->tracked_objects, gc, mark_object_in_frame);
 
-    /* Now free unmarked objects */
-    foreach_list_node(&gc->tracked_objects, NULL, free_unmarked_object);
-
     /* Now check if any marked objects exist that are only referenced by this frame (maybe do this first?) */
     foreach_list_node(&gc->marked_objects, frame, find_object_in_other_frames);
+
+    /* Now free unmarked objects */
+    foreach_list_node(&gc->tracked_objects, NULL, free_unmarked_object);
 
     free(frame_node);
 }
 
 void gc_track_object(Object *object)
 {
+    //printf("Tracking object of class %s with pointer %p\n", object->class->name, (void*)object);
     prepend_list_node(&gc->tracked_objects, object);
 }
 
