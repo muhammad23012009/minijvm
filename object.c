@@ -35,6 +35,17 @@ Field *object_get_field(Object *object, const char *field_name)
     return NULL;
 }
 
+void object_set_field(Object *object, const char *field_name, Variant value)
+{
+    Field *field = object_get_field(object, field_name);
+    if (!field) {
+        /* Uhhhh? */
+        return;
+    }
+
+    field->value = value;
+}
+
 Object *object_new(Class *class)
 {
     Object *object = malloc(sizeof(Object));

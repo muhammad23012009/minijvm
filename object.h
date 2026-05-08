@@ -28,6 +28,7 @@
 
 typedef struct Class Class;
 typedef struct Field Field;
+typedef struct Variant Variant;
 
 typedef struct Object {
     Class *class;
@@ -40,6 +41,8 @@ typedef struct Object {
 } Object;
 
 extern Field *object_get_field(Object *object, const char *field_name);
+extern void object_set_field(Object *object, const char *field_name, Variant value);
+
 extern Object *object_new(Class *class);
 extern void object_free(Object *object);
 
