@@ -25,18 +25,18 @@ uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index)
 
 const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index];
-    if (info.tag == CONSTANT_CLASS) {
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_CLASS) {
         // Resolve to the actual tag
-        info = pool->pool[info.class_index];
+        info = &pool->pool[info->class_index];
     }
 
-    if (info.tag == CONSTANT_STRING) {
-        info = pool->pool[info.string_index];
+    if (info->tag == CONSTANT_STRING) {
+        info = &pool->pool[info->string_index];
     }
 
-    if (info.tag == CONSTANT_UTF8) {
-        return (char*) info.byte_ref.bytes;
+    if (info->tag == CONSTANT_UTF8) {
+        return (char*) info->byte_ref.bytes;
     }
 
     return "";
@@ -45,37 +45,51 @@ const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index)
 /* Used by both methods and fields */
 const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index];
-    if (info.tag == CONSTANT_METHODREF) {
-        info = pool->pool[info.method_ref.class_index];
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_METHODREF) {
+        info = &pool->pool[info->method_ref.class_index];
     }
 
-    if (info.tag == CONSTANT_FIELDREF) {
-        info = pool->pool[info.field_ref.class_index];
+    if (info->tag == CONSTANT_FIELDREF) {
+        info = &pool->pool[info->field_ref.class_index];
     }
 
-    return constant_pool_resolve_string(pool, info.class_index);
+    return constant_pool_resolve_string(pool, info->class_index);
 }
 
 const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index];
-    if (info.tag == CONSTANT_METHODREF) {
-        info = pool->pool[info.method_ref.name_and_type_index];
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_METHODREF) {
+        info = &pool->pool[info->method_ref.name_and_type_index];
     }
 
-    if (info.tag == CONSTANT_FIELDREF) {
-        info = pool->pool[info.field_ref.name_and_type_index];
+    if (info->tag == CONSTANT_FIELDREF) {
+        info = &pool->pool[info->field_ref.name_and_type_index];
     }
 
-    return constant_pool_resolve_string(pool, info.name_and_type_info.name_index);
+    return constant_pool_resolve_string(pool, info->name_and_type_info.name_index);
+}
+
+const char *constant_pool_resolve_field_descriptor(ConstantPool *pool, uint16_t index)
+{
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_METHODREF) {
+        info = &pool->pool[info->method_ref.name_and_type_index];
+    }
+
+    if (info->tag == CONSTANT_FIELDREF) {
+        info = &pool->pool[info->field_ref.name_and_type_index];
+    }
+
+    return constant_pool_resolve_string(pool, info->name_and_type_info.descriptor_index);
 }
 
 int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
 {
-    ConstantPoolInfo info = pool->pool[index];
-    if (info.tag == CONSTANT_INT) {
-        return info.int_val;
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_INT) {
+        return info->int_val;
     }
 
     return -1;
@@ -141,11 +155,16 @@ ConstantPool *constant_pool_new(Reader *reader)
             case CONSTANT_UTF8:
                 cp_info->byte_ref.length = reader_read_uint16_be(reader);
                 cp_info->byte_ref.bytes = malloc(cp_info->byte_ref.length + 1);
-                reader_read_bytes(reader, cp_info->byte_ref.bytes, cp_info->byte_ref.length);
+                reader_read_bytes(reader, (char*)cp_info->byte_ref.bytes, cp_info->byte_ref.length);
                 cp_info->byte_ref.bytes[cp_info->byte_ref.length] = '\0';
                 break;
             case CONSTANT_INT:
                 cp_info->int_val = reader_read_uint32_be(reader);
+                break;
+            case CONSTANT_LONG:
+                cp_info->long_val.high_bytes = reader_read_uint32_be(reader);
+                cp_info->long_val.low_bytes = reader_read_uint32_be(reader);
+                i += 1; /* Long and double take up two entries in the constant pool */
                 break;
             case CONSTANT_CLASS:
                 cp_info->class_index = reader_read_uint16_be(reader);
@@ -160,6 +179,9 @@ ConstantPool *constant_pool_new(Reader *reader)
             case CONSTANT_METHODREF:
                 cp_info->method_ref.class_index = reader_read_uint16_be(reader);
                 cp_info->method_ref.name_and_type_index = reader_read_uint16_be(reader);
+                break;
+            case CONSTANT_METHODTYPE:
+                cp_info->name_and_type_info.descriptor_index = reader_read_uint16_be(reader);
                 break;
             case CONSTANT_NAMEANDTYPE:
                 cp_info->name_and_type_info.name_index = reader_read_uint16_be(reader);
@@ -185,10 +207,11 @@ ConstantPool *constant_pool_new(Reader *reader)
 void constant_pool_free(ConstantPool *pool)
 {
     for (int i = 0; i < pool->count; i++) {
-        ConstantPoolInfo info = pool->pool[i];
-        switch (info.tag) {
+        ConstantPoolInfo *info = &pool->pool[i];
+
+        switch (info->tag) {
             case CONSTANT_UTF8:
-                free(info.byte_ref.bytes);
+                free(info->byte_ref.bytes);
             default:
                 break;
         }

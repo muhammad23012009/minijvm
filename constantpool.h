@@ -23,17 +23,18 @@
 #include "reader.h"
 
 /* Constant pool tags */
-#define CONSTANT_UTF8       0x01
-#define CONSTANT_INT        0x03
-#define CONSTANT_FLOAT      0x04
-#define CONSTANT_LONG       0x05
-#define CONSTANT_DOUBLE     0x06
-#define CONSTANT_CLASS      0x07
-#define CONSTANT_STRING     0x08
-#define CONSTANT_FIELDREF   0x09
-#define CONSTANT_METHODREF  0x0A
-#define CONSTANT_METHODHANDLE   0x0F
+#define CONSTANT_UTF8           0x01
+#define CONSTANT_INT            0x03
+#define CONSTANT_FLOAT          0x04
+#define CONSTANT_LONG           0x05
+#define CONSTANT_DOUBLE         0x06
+#define CONSTANT_CLASS          0x07
+#define CONSTANT_STRING         0x08
+#define CONSTANT_FIELDREF       0x09
+#define CONSTANT_METHODREF      0x0A
 #define CONSTANT_NAMEANDTYPE    0x0C
+#define CONSTANT_METHODHANDLE   0x0F
+#define CONSTANT_METHODTYPE     0x10
 #define CONSTANT_DYNAMIC_INFO   0x11
 #define CONSTANT_INVOKEDYNAMIC  0x12
 
@@ -96,7 +97,7 @@ typedef struct ConstantPool {
 
 typedef struct Interface {
     uint16_t index;
-    char *interface;
+    const char *interface;
 } Interface;
 
 /* Helper functions */
@@ -105,6 +106,7 @@ extern const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t ind
 
 extern const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t index);
 extern const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
+extern const char *constant_pool_resolve_field_descriptor(ConstantPool *pool, uint16_t index);
 extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
 extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Class *parent);
 
