@@ -19,6 +19,9 @@
 
 AttributeInfo *attributes_get_attribute(Attributes *attrs, char *name)
 {
+    if (!attrs)
+        return NULL;
+
     for (int i = 0; i < attrs->count; i++) {
         if (!strcmp(attrs->attributes[i].attribute_info.attribute, name)) {
             return &attrs->attributes[i];
@@ -52,7 +55,7 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
             attr->CodeAttribute.max_locals = reader_read_uint16_be(reader);
             attr->CodeAttribute.code_length = reader_read_uint32_be(reader);
             attr->CodeAttribute.code = malloc(attr->CodeAttribute.code_length);
-            reader_read_bytes(reader, attr->CodeAttribute.code, attr->CodeAttribute.code_length);
+            reader_read_bytes(reader, (char*)attr->CodeAttribute.code, attr->CodeAttribute.code_length);
 
             uint16_t exception_table_length = reader_read_uint16_be(reader);
             /*
