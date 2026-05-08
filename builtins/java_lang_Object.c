@@ -29,7 +29,6 @@ Object *java_lang_Object_getClass(Object *this)
 void java_lang_Object_init(Object *this)
 {
     this->initialized = true;
-    printf("Initialized object of class %s\n", this->class->name);
 }
 
 static builtin_methods methods[] = {

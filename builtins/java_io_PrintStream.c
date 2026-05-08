@@ -19,12 +19,11 @@
 
 void java_io_PrintStream_println_str(Object *this, Object *str)
 {
-    printf("%s\n", object_get_field(str, "value")->value.data.ref);
+    printf("%s\n", (char*)object_get_field(str, "value")->value.data.ref);
 }
 
 void java_io_PrintStream_println_int(Object *this, int value)
 {
-    printf("'this' is %s\n", this->class->name);
     printf("%d\n", value);
 }
 

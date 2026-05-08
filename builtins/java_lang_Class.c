@@ -6,7 +6,7 @@ Object *java_lang_Class_getName(Object *this)
     Class *class = object_get_field(this, "class")->value.data.class;
     Object *string = object_new(classes_get_class("java/lang/String"));
 
-    object_get_field(string, "value")->value.data.ref = class->name;
+    object_set_field(string, "value", variant_make_ref(class->name));
     return string;
 }
 
