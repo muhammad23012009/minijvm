@@ -95,58 +95,12 @@ int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
     return -1;
 }
 
-/* I am not proud of this code... Need to find a better way to resolve classes */
-bool constant_pool_resolve_unknowns(ConstantPool *pool, Class *parent)
-{
-    for (int i = 1; i < pool->count; i++) {
-        ConstantPoolInfo *info = &pool->pool[i];
-        switch (info->tag) {
-            case CONSTANT_CLASS: {
-                int length;
-                char class_path[2048];
-                char class_name[64]; // Good assumption?
-                char *ptr = class_name;
-
-                strncpy(class_name, constant_pool_resolve_string(pool, info->class_index), 64);
-                if (!strcmp(class_name, parent->name))
-                    continue;
-
-                if (*ptr == '[') {
-                    /* Java array. Skip this character */
-                    ptr++;
-                }
-
-                if (*ptr == 'L' && *(ptr + strlen(class_name) - 1) == ';') {
-                    /* Java object */
-                    printf("Got a Java object!\n");
-                    ptr++;
-                    ptr[strlen(class_name) - 1] = '\0';
-                }
-
-                if (classes_get_class(class_name))
-                    continue;
-
-                printf("Found unknown class %s, will try to resolve.\n", class_name);
-
-                snprintf(class_path, 2048, "%s%s", class_name, ".class");
-
-                if (!classes_add_class(class_parse_file(class_path))) {
-                    fprintf(stderr, "Failed to resolve dependencies!\n");
-                    return false;
-                }
-            }
-        }
-    }
-
-    return true;
-}
-
 /* Creates the constant pool array from a data reader */
 ConstantPool *constant_pool_new(Reader *reader)
 {
     ConstantPool *cpool = malloc(sizeof(ConstantPool));
     cpool->count = reader_read_uint16_be(reader);
-    cpool->pool = malloc(sizeof(ConstantPoolInfo) * (cpool->count + 1));
+    cpool->pool = calloc(cpool->count, sizeof(ConstantPoolInfo));
 
     for (int i = 1; i < cpool->count; i++) {
         ConstantPoolInfo *cp_info = &cpool->pool[i];
@@ -161,9 +115,17 @@ ConstantPool *constant_pool_new(Reader *reader)
             case CONSTANT_INT:
                 cp_info->int_val = reader_read_uint32_be(reader);
                 break;
+            case CONSTANT_FLOAT:
+                cp_info->float_val = reader_read_uint32_be(reader);
+                break;
             case CONSTANT_LONG:
                 cp_info->long_val.high_bytes = reader_read_uint32_be(reader);
                 cp_info->long_val.low_bytes = reader_read_uint32_be(reader);
+                i += 1; /* Long and double take up two entries in the constant pool */
+                break;
+            case CONSTANT_DOUBLE:
+                cp_info->double_val.high_bytes = reader_read_uint32_be(reader);
+                cp_info->double_val.low_bytes = reader_read_uint32_be(reader);
                 i += 1; /* Long and double take up two entries in the constant pool */
                 break;
             case CONSTANT_CLASS:
@@ -177,6 +139,7 @@ ConstantPool *constant_pool_new(Reader *reader)
                 cp_info->field_ref.name_and_type_index = reader_read_uint16_be(reader);
                 break;
             case CONSTANT_METHODREF:
+            case CONSTANT_INTERFACE_METHODREF:
                 cp_info->method_ref.class_index = reader_read_uint16_be(reader);
                 cp_info->method_ref.name_and_type_index = reader_read_uint16_be(reader);
                 break;
@@ -197,7 +160,8 @@ ConstantPool *constant_pool_new(Reader *reader)
                 cp_info->method_handle_info.ref_index = reader_read_uint16_be(reader);
                 break;
             default:
-                printf("Unknown constant pool type 0x%x!\n", cp_info->tag);
+                fprintf(stderr, "Unknown constant pool type 0x%x!\n", cp_info->tag);
+                exit(1);
         }
     }
 
@@ -206,7 +170,7 @@ ConstantPool *constant_pool_new(Reader *reader)
 
 void constant_pool_free(ConstantPool *pool)
 {
-    for (int i = 0; i < pool->count; i++) {
+    for (int i = 1; i < pool->count; i++) {
         ConstantPoolInfo *info = &pool->pool[i];
 
         switch (info->tag) {

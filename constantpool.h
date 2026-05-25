@@ -32,6 +32,7 @@
 #define CONSTANT_STRING         0x08
 #define CONSTANT_FIELDREF       0x09
 #define CONSTANT_METHODREF      0x0A
+#define CONSTANT_INTERFACE_METHODREF 0x0B
 #define CONSTANT_NAMEANDTYPE    0x0C
 #define CONSTANT_METHODHANDLE   0x0F
 #define CONSTANT_METHODTYPE     0x10
@@ -56,6 +57,11 @@ typedef struct ConstantPoolInfo {
             uint32_t high_bytes;
             uint32_t low_bytes;
         } long_val;
+
+        struct {
+            uint32_t high_bytes;
+            uint32_t low_bytes;
+        } double_val;
 
         struct {
             uint16_t class_index;
@@ -95,11 +101,6 @@ typedef struct ConstantPool {
     ConstantPoolInfo *pool;
 } ConstantPool;
 
-typedef struct Interface {
-    uint16_t index;
-    const char *interface;
-} Interface;
-
 /* Helper functions */
 extern uint8_t constant_pool_get_tag(ConstantPool *pool, uint16_t index);
 extern const char *constant_pool_resolve_string(ConstantPool *pool, uint16_t index);
@@ -108,7 +109,6 @@ extern const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t
 extern const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
 extern const char *constant_pool_resolve_field_descriptor(ConstantPool *pool, uint16_t index);
 extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
-extern bool constant_pool_resolve_unknowns(ConstantPool *pool, Class *parent);
 
 extern ConstantPool *constant_pool_new(Reader *reader);
 extern void constant_pool_free(ConstantPool *pool);
