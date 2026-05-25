@@ -10,6 +10,12 @@ Object *java_lang_Class_getName(Object *this)
     return string;
 }
 
+Object *java_lang_Class_getClassLoader(Object *this)
+{
+    /* We don't support class loaders, so just return null. */
+    return NULL;
+}
+
 builtin_fields java_lang_Class_fields[] = {
     /* Internal "Class" object pointer */
     { "class", "", 0x0000 },
@@ -17,6 +23,7 @@ builtin_fields java_lang_Class_fields[] = {
 
 builtin_methods java_lang_Class_methods[] = {
     { "getName", "()Ljava/lang/String;", 0x0000, &java_lang_Class_getName },
+    { "getClassLoader", "()Ljava/lang/ClassLoader;", 0x0000, &java_lang_Class_getClassLoader },
 };
 
 builtins java_lang_Class_builtins = {

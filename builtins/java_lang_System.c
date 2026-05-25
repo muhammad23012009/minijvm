@@ -26,12 +26,24 @@ void java_lang_System_clinit(Class *this)
     field->value.data.object->parent_field = field;
 }
 
+void java_lang_System_loadLibrary(Object *name)
+{
+    // Make this call into Runtime.getRuntime().loadLibrary(name) eventually
+    const char format[] = "lib%s.so";
+    char *lib_name;
+
+    asprintf(&lib_name, format, object_get_field(name, "value")->value.data.ref);
+    jni_load(get_jni(), lib_name);
+    free(lib_name);
+}
+
 static builtin_fields fields[] = {
     { "out", "Ljava/io/PrintStream;", 0x0008 },
 };
 
 static builtin_methods methods[] = {
     { "<clinit>", "()V", 0, &java_lang_System_clinit },
+    { "loadLibrary", "(Ljava/lang/String;)V", ACC_STATIC, &java_lang_System_loadLibrary }
 };
 
 builtins java_lang_System_builtins = {
