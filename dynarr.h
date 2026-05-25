@@ -12,6 +12,14 @@ struct ArrayMetadata {
 #define arr_init(type)                                                           \
     (type*)((struct ArrayMetadata*)calloc(1, sizeof(struct ArrayMetadata)) + 1)  \
 
+static void *arr_init_with_capacity(size_t type_size, size_t capacity)
+{
+    struct ArrayMetadata *metadata = malloc(sizeof(struct ArrayMetadata) + type_size * capacity);
+    metadata->capacity = capacity;
+    metadata->length = 0;
+    return (void*)(metadata + 1);
+}
+
 #define arr_push(arr, value) \
     do { \
         struct ArrayMetadata *metadata = (struct ArrayMetadata*)(arr) - 1;  \
@@ -20,7 +28,7 @@ struct ArrayMetadata {
                 metadata->capacity = 4;                                     \
             else                                                            \
                 metadata->capacity *= 2;                                    \
-            metadata = (struct ArrayMetadata*)realloc(metadata, sizeof(struct ArrayMetadata) + sizeof(char*) * metadata->capacity); \
+            metadata = (struct ArrayMetadata*)realloc(metadata, sizeof(struct ArrayMetadata) + sizeof(value) * metadata->capacity); \
             (arr) = (typeof(arr))(metadata + 1);                                 \
         }                                                                   \
         (arr)[metadata->length++] = value;                                  \
