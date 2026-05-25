@@ -66,6 +66,9 @@ Descriptor parse_descriptor(const char **string, const char *end)
         case 'C':
             descriptor.type = DESCRIPTOR_CHAR;
             break;
+        case 'Z':
+            descriptor.type = DESCRIPTOR_BOOL;
+            break;
         case 'L': {
             /* Object type */
             char* obj_end = strchr(*string, ';');

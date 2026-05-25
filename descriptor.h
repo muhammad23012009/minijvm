@@ -16,6 +16,7 @@ typedef enum {
     DESCRIPTOR_INT,
     DESCRIPTOR_OBJECT,
     DESCRIPTOR_CHAR,
+    DESCRIPTOR_BOOL,
 } DescriptorType;
 
 typedef struct Descriptor {
@@ -39,6 +40,7 @@ typedef struct Descriptors {
 } Descriptors;
 
 extern int get_descriptor_count(const char *descriptor);
+extern Descriptor parse_descriptor(const char **string, const char *end);
 
 extern Descriptors *descriptors_new(const char *descriptor);
 extern void descriptors_free(Descriptors *descriptor);
