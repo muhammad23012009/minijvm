@@ -13,6 +13,7 @@ typedef enum {
     VARIANT_TYPE_OBJECT,
     VARIANT_TYPE_REF,
     VARIANT_TYPE_INT,
+    VARIANT_TYPE_LONG,
     VARIANT_TYPE_CLASS,
 } VariantType;
 
@@ -25,6 +26,7 @@ typedef struct Variant {
         Object *object;
         void *ref;
         int int_val;
+        uint64_t long_val;
     } data;
 } Variant;
 
@@ -38,6 +40,13 @@ static inline void variant_acquire(Variant *variant)
 static inline Variant variant_make_int(int value)
 {
     Variant ret = (Variant){ .type = VARIANT_TYPE_INT, .data.int_val = value, .refcnt = 0 };
+    variant_acquire(&ret);
+    return ret;
+}
+
+static inline Variant variant_make_long(uint64_t value)
+{
+    Variant ret = (Variant){ .type = VARIANT_TYPE_LONG, .data.long_val = value, .refcnt = 0 };
     variant_acquire(&ret);
     return ret;
 }
