@@ -57,6 +57,11 @@ typedef struct Frame {
 extern Frame *frame_new(int max_stack, int max_local);
 extern void frame_free(Frame *frame);
 
+typedef struct Interface {
+    uint16_t index;
+    const char *interface;
+} Interface;
+
 typedef struct Class {
     struct Classes *classes;
     /* Each class has an associated Reader to read data */
@@ -75,6 +80,10 @@ typedef struct Class {
 
     int methods_count;
     Method *methods;
+
+    // All the interfaces this class implements, or extends.
+    int interfaces_count;
+    Interface *interfaces;
 
     bool static_initialized;
 
@@ -106,6 +115,7 @@ extern Method *classes_get_main_method();
 extern void classes_new();
 extern void classes_free();
 
+extern void call_native_method(Method *method, Frame *frame);
 extern void method_execute(Method *method, Frame *frame);
 
 #endif

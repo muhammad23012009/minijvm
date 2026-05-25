@@ -43,6 +43,7 @@ static Method **s_dynamic_methods = NULL;
 #define DISPATCH()          \
     ++frame->pc;            \
     op = data[frame->pc];   \
+    printf("Executing opcode 0x%x at pc %d\n", op, frame->pc); \
     goto *opcodes[op]       \
 
 Frame *frame_new(int max_stack, int max_local)
@@ -209,6 +210,15 @@ void call_native_method(Method *method, Frame *frame)
             break;
     }
 
+    if (method->info.access_flags & ACC_NATIVE)
+    {
+        if (!method->class->static_initialized)
+        {
+            class_initialize_static(method->class);
+        }
+        av_ptr(list, JNIEnv *, &get_jni()->env);
+    }
+
     /* If the function isn't static, push the "this" pointer */
     if (!(method->info.access_flags & 0x0008)) {
         av_ptr(list, Object *, frame->locals[j++].data.object);
@@ -255,6 +265,7 @@ void method_execute(Method *method, Frame *frame)
     uint8_t op;
 
     static void *opcodes[] = {
+        [1] = &&aconst_null,
         [2] = &&iconst_m1,
         [3] = &&iconst_0,
         [4] = &&iconst_1,
@@ -265,6 +276,7 @@ void method_execute(Method *method, Frame *frame)
         [16] = &&bipush,
         [17] = &&sipush,
         [18] = &&ldc,
+        [20] = &&ldc2_w,
         [21] = &&iload,
         [25] = &&aload,
         [26 ... 29] = &&iload_x,
@@ -274,6 +286,7 @@ void method_execute(Method *method, Frame *frame)
         [58] = &&astore,
         [59 ... 62] = &&istore_x,
         [75 ... 78] = &&astore_x,
+        [79] = &&iastore,
         [83] = &&aastore,
         [87] = &&pop,
         [89] = &&dup,
@@ -283,6 +296,7 @@ void method_execute(Method *method, Frame *frame)
         [159 ... 164] = &&if_cmpx,
         [167] = &&j_goto,
         [172] = &&ireturn,
+        [176] = &&areturn,
         [177] = &&j_return,
         [178] = &&getstatic,
         [179] = &&putstatic,
@@ -291,11 +305,14 @@ void method_execute(Method *method, Frame *frame)
         [182] = &&invokevirtual,
         [183] = &&invokespecial,
         [184] = &&invokestatic,
+        [185] = &&invokeinterface,
         [186] = &&invokedynamic,
         [187] = &&new,
+        [188] = &&newarray,
         [189] = &&anewarray,
         [190] = &&arraylength,
         [197] = &&multianewarray,
+        [199] = &&ifnonnull,
     };
 
     frame->pc = 0;
@@ -303,6 +320,10 @@ void method_execute(Method *method, Frame *frame)
 
     op = data[frame->pc];
     goto *opcodes[op];
+
+    aconst_null:
+        stack_push(frame->stack, variant_make_ref(NULL));
+        DISPATCH();
 
     iconst_m1: {
         stack_push_int(frame->stack, -1);
@@ -388,6 +409,25 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    ldc2_w: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        uint8_t tag = constant_pool_get_tag(pool, index);
+        Variant variant = {0};
+
+        switch (tag) {
+            case CONSTANT_LONG: {
+                uint64_t long_val;
+                memcpy(&long_val, &pool->pool[index].long_val.low_bytes, sizeof(uint32_t));
+                memcpy((uint8_t*)&long_val + 4, &pool->pool[index].long_val.high_bytes, sizeof(uint32_t));
+                variant = variant_make_long(long_val);
+                break;
+            }
+        }
+
+        stack_push(frame->stack, variant);
+        DISPATCH();
+    }
+
     iload: {
         uint8_t index = data[++frame->pc];
         stack_push(frame->stack, frame->locals[index]);
@@ -445,6 +485,15 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    iastore: {
+        int value = stack_pop(frame->stack).data.int_val;
+        int index = stack_pop(frame->stack).data.int_val;
+        int* array = stack_pop(frame->stack).data.ref;
+
+        arr_push(array, value);
+
+        DISPATCH();
+    }
     aastore: {
         Variant value = stack_pop(frame->stack);
         int index = stack_pop(frame->stack).data.int_val;
@@ -529,6 +578,9 @@ void method_execute(Method *method, Frame *frame)
     }
 
     ireturn:
+        return;
+
+    areturn:
         return;
 
     j_return:
@@ -670,7 +722,82 @@ void method_execute(Method *method, Frame *frame)
     }
 
     invokestatic: {
-        
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        Class *class = classes_get_class_from_index(pool, index);
+        Method *class_method = get_method(pool, class, index);
+        printf("Descriptors: %s\n", class_method->descriptors->descriptor);
+        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
+        int arguments_count = class_method->descriptors->arguments_count;
+
+        for (int i = arguments_count - 1; i >= 0; i--) {
+            Variant item = stack_pop(frame->stack);
+            subframe->locals[i] = item;
+        }
+
+        if (class->built_in || class_method->info.access_flags & ACC_NATIVE) {
+            call_native_method(class_method, subframe);
+        } else {
+            method_execute(class_method, subframe);
+        }
+
+        if (class_method->descriptors &&
+            class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID) {
+            Variant item = stack_pop(subframe->stack);
+            stack_push(frame->stack, item);
+        }
+
+        frame_free(subframe);
+        DISPATCH();
+    }
+
+    invokeinterface: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        frame->pc += 2;
+        Class *interface = classes_get_class_from_index(pool, index);
+        Method *interface_method = get_method(pool, interface, index);
+        Object *real_class = NULL;
+
+        int arguments_count = interface_method->descriptors->arguments_count;
+        Variant *temp_locals = NULL;
+        if (arguments_count)
+        {
+            temp_locals = malloc(sizeof(Variant) * (arguments_count + !!(interface_method->info.access_flags & 0x0008)));
+            for (int i = 1; i <= arguments_count; ++i) {
+                temp_locals[i] = stack_pop(frame->stack);
+            }
+        }
+
+        if (!(interface_method->info.access_flags & 0x0008)) {
+            if (!temp_locals)
+                temp_locals = malloc(sizeof(Variant));
+
+            temp_locals[0] = stack_pop(frame->stack);
+            real_class = temp_locals[0].data.object;
+        }
+
+        printf("invokeinterface on interface %s\n", interface->name);
+
+        Method *method = class_get_method(real_class->class, interface_method->name, interface_method->descriptors->descriptor);
+        if (!method) {
+            fprintf(stderr, "No implementation found for method %s with descriptor %s in class %s\n",
+                    interface_method->name, interface_method->descriptors->descriptor, real_class->class->name);
+            exit(1);
+        }
+
+        Frame *subframe = frame_new(method->max_stack, method->max_local);
+        for (int i = 0; i < arguments_count + !!(interface_method->info.access_flags & 0x0008); ++i) {
+            subframe->locals[i] = temp_locals[i];
+        }
+        free(temp_locals);
+
+        if (method->class->built_in || method->info.access_flags & ACC_NATIVE) {
+            call_native_method(method, subframe);
+        } else {
+            method_execute(method, subframe);
+        }
+        frame_free(subframe);
+
+        DISPATCH();
     }
 
     invokedynamic: {
@@ -799,6 +926,41 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    newarray: {
+        uint8_t type = data[++frame->pc];
+        uint32_t count = stack_pop(frame->stack).data.int_val;
+
+        void *arr = NULL;
+        switch (type) {
+            case 4: /* boolean */
+            case 8: /* byte */
+                arr = arr_init_with_capacity(sizeof(char), count);
+                break;
+            case 6: /* float */
+                arr = arr_init_with_capacity(sizeof(float), count);
+                break;
+            case 7: /* double */
+                arr = arr_init_with_capacity(sizeof(double), count);
+                break;
+            case 5: /* char */
+                arr = arr_init_with_capacity(sizeof(short), count);
+                break;
+            case 10: /* int */
+                arr = arr_init_with_capacity(sizeof(int), count);
+                break;
+            case 11: /* long */
+                arr = arr_init_with_capacity(sizeof(long), count);
+                break;
+            default:
+                fprintf(stderr, "Unsupported array type 0x%x in newarray instruction\n", type);
+                exit(1);
+        }
+
+        stack_push_ref(frame->stack, arr);
+
+        DISPATCH();
+    }
+
     anewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(pool, index);
@@ -820,6 +982,20 @@ void method_execute(Method *method, Frame *frame)
 
     multianewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];        
+    }
+
+    ifnonnull: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        Variant value = stack_pop(frame->stack);
+
+        // TODO: Fix our assumption of what a Java reference is
+        if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT) {
+            if (value.data.ref != NULL) {
+                frame->pc += branch_offset - 3;
+            }
+        }
+
+        DISPATCH();
     }
 }
 
@@ -869,15 +1045,18 @@ Class *class_parse_file(char *filename)
     printf("some basic information...\n");
 
     uint16_t interfaces_count = reader_read_uint16_be(reader);
-    Interface *interfaces = malloc(sizeof(Interface) * interfaces_count);
+    if (interfaces_count)
+    {
+        class->interfaces = malloc(sizeof(Interface) * interfaces_count);
 
-    for (int i = 0; i < interfaces_count; i++) {
-        Interface *iface = &interfaces[i];
-        iface->index = reader_read_uint16_be(reader);
-        iface->interface = constant_pool_resolve_string(class->pool, iface->index);
+        for (int i = 0; i < interfaces_count; i++) {
+            uint16_t interface_index = reader_read_uint16_be(reader);
+            class->interfaces[i].index = interface_index;
+            class->interfaces[i].interface = constant_pool_resolve_string(class->pool, interface_index);
+        }
     }
 
-    free(interfaces); // TODO: Implement interfaces
+    class->interfaces_count = interfaces_count;
 
     /* TODO: Eventually drop these somehow */
     class->fields = fields_new(class, reader, class->pool);
@@ -895,7 +1074,7 @@ void class_initialize_static(Class *class)
 {
     Method *static_init = NULL;
 
-    if (class->fields->static_fields_count && (static_init = class_get_method(class, "<clinit>", "()V"))) {
+    if ((static_init = class_get_method(class, "<clinit>", "()V"))) {
         class->static_initialized = true;
         Frame *frame = frame_new(static_init->max_stack, static_init->max_local);
 
@@ -913,6 +1092,7 @@ void class_free(Class *class)
     if (!class->built_in) {
         attributes_free(class->attributes);
         constant_pool_free(class->pool);
+        free(class->interfaces);
         free(class->reader);
         free(class->data);
     }
@@ -949,7 +1129,15 @@ Method *class_get_method(Class *class, const char *name, const char *descriptor)
     for (int i = 0; i < class->methods_count; i++) {
         Method *method = &class->methods[i];
         if (!strcmp(method->name, name) && !strcmp(method->descriptors->descriptor, descriptor))
+        {
+            if ((method->info.access_flags & ACC_NATIVE) && !method->native_method)
+            {
+                method->native_method = jni_resolve_method(get_jni(), class->name, method->name);
+                method->max_stack = !!(method->descriptors->return_descriptor.type != DESCRIPTOR_VOID);
+                method->max_local = method->descriptors->arguments_count + !!(method->info.access_flags & ACC_STATIC);
+            }
             return method;
+        }
     }
 
     return NULL;
@@ -987,14 +1175,6 @@ bool classes_add_class(Class *class)
     s_classes->classes = realloc(s_classes->classes, (sizeof(Class*) * (s_classes->count + 1)));
     s_classes->classes[s_classes->count++] = class;
 
-    // Resolve unknowns at the very end, so no circular dependencies can cause issues.
-    if (!class->built_in) {
-        if (!constant_pool_resolve_unknowns(class->pool, class)) {
-            class_free(class);
-            return false;
-        }
-    }
-
     return true;
 }
 
@@ -1016,7 +1196,28 @@ Class *classes_get_class(const char *name)
 Class *classes_get_class_from_index(ConstantPool *pool, uint16_t index)
 {
     const char *name = constant_pool_resolve_class_name(pool, index);
-    return classes_get_class(name);
+    Class *class = classes_get_class(name);
+
+    if (!class)
+    {
+        // Let's try resolving it.
+        printf("Class %s not found, trying to resolve it now...\n", name);
+        char class_path[2048];
+        snprintf(class_path, sizeof(class_path), "%s.class", name);
+        printf("Trying to load class from path %s\n", class_path);
+        class = class_parse_file(class_path);
+        if (class) {
+            if (!classes_add_class(class)) {
+                fprintf(stderr, "Failed to resolve class %s\n", name);
+                return NULL;
+            }
+        } else {
+            fprintf(stderr, "Failed to resolve class %s\n", name);
+            return NULL;
+        }
+    }
+
+    return class;
 }
 
 Method *classes_get_main_method()
