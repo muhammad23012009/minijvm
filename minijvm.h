@@ -25,7 +25,9 @@
 #include "constantpool.h"
 #include "method.h"
 #include "object.h"
+#include "jni.h"
 
 extern jit_context_t get_jit_context();
+extern JNI *get_jni();
 
 #endif

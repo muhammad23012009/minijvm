@@ -27,6 +27,8 @@
 #include "dynarr.h"
 
 static jit_context_t s_jit_context;
+static JNI *s_jni;
+
 void destroy_dynamic_methods();
 
 static char *help_text = "miniJVM: a stupidly simple JVM. \n\
@@ -35,6 +37,11 @@ Usage: ./miniJVM <class name>\n";
 jit_context_t get_jit_context()
 {
     return s_jit_context;
+}
+
+JNI *get_jni()
+{
+    return s_jni;
 }
 
 int main(int argc, char *argv[])
@@ -52,17 +59,20 @@ int main(int argc, char *argv[])
 
     // Setup JIT
     s_jit_context = jit_context_create();
+    s_jni = jni_init();
 
     char filename[2048];
     snprintf(filename, 2048, "%s%s", argv[1], ".class");
 
     classes_new();
 
+    gc_create();
+
     /* Setup built-in classes and methods */
     classes_add_class(class_create_builtin("java/lang/Object", &java_lang_Object_builtins));
     classes_add_class(class_create_builtin("java/util/Objects", &java_util_Objects_builtins));
-    classes_add_class(class_create_builtin("java/lang/System", &java_lang_System_builtins));
     classes_add_class(class_create_builtin("java/io/PrintStream", &java_io_PrintStream_builtins));
+    classes_add_class(class_create_builtin("java/lang/System", &java_lang_System_builtins));
     classes_add_class(class_create_builtin("java/lang/String", &java_lang_String_builtins));
     classes_add_class(class_create_builtin("java/lang/Class", &java_lang_Class_builtins));
     classes_add_class(class_create_builtin("java/lang/invoke/CallSite", &java_lang_invoke_CallSite_builtins));
@@ -86,14 +96,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    gc_create();
     Frame *main_frame = frame_new(main_method->max_stack, main_method->max_local);
 
     method_execute(main_method, main_frame);
-
-    destroy_dynamic_methods();
-    classes_free();
     frame_free(main_frame);
+
+    classes_free();
+    destroy_dynamic_methods();
+    jni_free(s_jni);
     gc_free();
 
     jit_context_destroy(s_jit_context);
