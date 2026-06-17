@@ -15,8 +15,10 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include "object.h"
 #include "gc.h"
+#include "dynarr.h"
 
 /* TODO:
  * Add fields for objects 
@@ -48,27 +50,35 @@ void object_set_field(Object *object, const char *field_name, Variant value)
 
 Object *object_new(Class *class)
 {
-    Object *object = malloc(sizeof(Object));
-    object->class = class;
-    object->initialized = false;
-    object->parent_field = NULL;
+    Field *fields = arr_init(Field);
+    Class *object_class = class;
+    Object *ret;
+    int fields_count = 0;
 
-    /* Parse all fields in the class */
-    if (class->fields && class->fields->fields_count > 0) {
-        object->fields_count = class->fields->fields_count;
-        object->fields = calloc(object->fields_count, sizeof(Field));
-        memcpy(object->fields, class->fields->fields, sizeof(Field) * object->fields_count);
+    while (class) {
+        if (class->fields && class->fields->fields_count) {
+            fields_count += class->fields->fields_count;
 
-        for (int i = 0; i < object->fields_count; i++) {
-            object->fields[i].value = (Variant){0};
+            for (int i = 0; i < class->fields->fields_count; ++i) {
+                Field f = class->fields->fields[i];
+                arr_push(fields, f);
+            }
         }
-    } else {
-        object->fields_count = 0;
-        object->fields = NULL;
+
+        class = class->parent;
     }
 
-    gc_track_object(object);
-    return object;
+    ret = malloc(sizeof(Object) + sizeof(Field) * fields_count);
+    memset(ret, 0, sizeof(Object) + sizeof(Field) * fields_count);
+    ret->class = object_class;
+    ret->fields_count = fields_count;
+    if (ret->fields_count) {
+        memcpy(ret->fields, fields, sizeof(Field) * fields_count);
+        arr_free(fields);
+    }
+
+    //gc_track_object(object);
+    return ret;
 }
 
 void object_free(Object *object)
@@ -78,6 +88,5 @@ void object_free(Object *object)
     }
 
     // The class will actually free the relevant fields, we just need to free the copy we took.
-    free(object->fields);
     free(object);
 }

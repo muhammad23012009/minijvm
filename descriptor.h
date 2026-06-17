@@ -17,6 +17,9 @@ typedef enum {
     DESCRIPTOR_OBJECT,
     DESCRIPTOR_CHAR,
     DESCRIPTOR_BOOL,
+    DESCRIPTOR_LONG,
+    DESCRIPTOR_FLOAT,
+    DESCRIPTOR_DOUBLE,
 } DescriptorType;
 
 typedef struct Descriptor {
@@ -45,9 +48,11 @@ extern Descriptor parse_descriptor(const char **string, const char *end);
 extern Descriptors *descriptors_new(const char *descriptor);
 extern void descriptors_free(Descriptors *descriptor);
 
-#define FOREACH_DESCRIPTOR(descriptors) \
-    int i = 0; \
-    for (Descriptor descriptor = descriptors->arguments[i]; i < descriptors->arguments_count; ++i) \
+#define FOREACH_DESCRIPTOR(descriptors, descriptor)                     \
+    for (int _i = 0; (descriptors) != NULL &&                           \
+                     (descriptors)->arguments != NULL &&                \
+                     _i < (descriptors)->arguments_count &&             \
+                     (((descriptor) = (descriptors)->arguments[_i]), 1); _i++) \
 
 #define DESCRIPTORS_GET_RETURN_TYPE(descriptors) \
     descriptors->return_descriptor.type

@@ -40,7 +40,7 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
         return NULL;
     }
 
-    attributes->attributes = malloc(sizeof(AttributeInfo) * attributes->count);
+    attributes->attributes = calloc(attributes->count, sizeof(AttributeInfo));
 
     for (int i = 0; i < attributes->count; i++) {
         AttributeInfo *attr = &attributes->attributes[i];
@@ -57,7 +57,7 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
             attr->CodeAttribute.code = malloc(attr->CodeAttribute.code_length);
             reader_read_bytes(reader, (char*)attr->CodeAttribute.code, attr->CodeAttribute.code_length);
 
-            uint16_t exception_table_length = reader_read_uint16_be(reader);
+            attr->CodeAttribute.exception_table_length = reader_read_uint16_be(reader);
             /*
              *     {   u2 start_pc;
              *         u2 end_pc;
@@ -66,7 +66,15 @@ Attributes *attributes_new(Reader *reader, ConstantPool *pool)
              *     } exception_table[exception_table_length];
              * Skip these 8 bytes
              */
-            reader_skip(reader, 8 * exception_table_length);
+            if (attr->CodeAttribute.exception_table_length) {
+                attr->CodeAttribute.exception_table = calloc(attr->CodeAttribute.exception_table_length, sizeof(*attr->CodeAttribute.exception_table));
+                for (int j = 0; j < attr->CodeAttribute.exception_table_length; j++) {
+                    attr->CodeAttribute.exception_table[j].start_pc = reader_read_uint16_be(reader);
+                    attr->CodeAttribute.exception_table[j].end_pc = reader_read_uint16_be(reader);
+                    attr->CodeAttribute.exception_table[j].handler_pc = reader_read_uint16_be(reader);
+                    attr->CodeAttribute.exception_table[j].catch_type = reader_read_uint16_be(reader);
+                }
+            }
 
             // TODO: Parse these once we handle the basic attributes
             attr->CodeAttribute.attributes = attributes_new(reader, pool);
@@ -100,6 +108,10 @@ void attributes_free(Attributes *attributes)
         const char *attribute_name = info.attribute_info.attribute;
         if (!strcmp(attribute_name, "Code")) {
             attributes_free(info.CodeAttribute.attributes);
+
+            if (info.CodeAttribute.exception_table_length)
+                free(info.CodeAttribute.exception_table);
+
             free(info.CodeAttribute.code);
         } else if (!strcmp(attribute_name, "BootstrapMethods")) {
             for (int j = 0; j < info.BootstrapMethodsAttribute.num_bootstrap_methods; j++) {

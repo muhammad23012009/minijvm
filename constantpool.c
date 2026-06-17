@@ -95,6 +95,16 @@ int constant_pool_resolve_int(ConstantPool *pool, uint16_t index)
     return -1;
 }
 
+uint32_t constant_pool_resolve_float(ConstantPool *pool, uint16_t index)
+{
+    ConstantPoolInfo *info = &pool->pool[index];
+    if (info->tag == CONSTANT_FLOAT) {
+        return info->float_val;
+    }
+
+    return -1;
+}
+
 /* Creates the constant pool array from a data reader */
 ConstantPool *constant_pool_new(Reader *reader)
 {

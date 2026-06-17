@@ -39,6 +39,8 @@ extern void stack_push_object(Stack *stack, Object *value);
 extern void stack_dup(Stack *stack);
 extern Variant stack_pop(Stack *stack);
 
+extern void stack_clear(Stack *stack);
+
 extern Stack *stack_new(int max_size);
 extern void stack_free(Stack *stack);
 

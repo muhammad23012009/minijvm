@@ -1,4 +1,6 @@
 #include "fields.h"
+#include "reader.h"
+#include "builtins/builtins.h"
 
 Fields *fields_new(Class *class, Reader *reader, ConstantPool *pool)
 {
@@ -23,6 +25,9 @@ Fields *fields_new(Class *class, Reader *reader, ConstantPool *pool)
             fields->fields = realloc(fields->fields, sizeof(Field) * fields->fields_count);
             field = &fields->fields[fields->fields_count - 1];
         }
+
+        memset(field, 0, sizeof(Field));
+        field->class = class;
 
         /* Fill in FieldInfo */
         field->info.access_flags = access_flags;
@@ -115,6 +120,19 @@ Method *methods_new(Class *class, Reader *reader, ConstantPool *pool, int *count
             method->data = code_attr->CodeAttribute.code;
             method->max_stack = code_attr->CodeAttribute.max_stack;
             method->max_local = code_attr->CodeAttribute.max_locals;
+
+            // Copy the exception table (could improve this)
+            method->exception_table_length = code_attr->CodeAttribute.exception_table_length;
+            if (method->exception_table_length) {
+                method->exception_table = calloc(method->exception_table_length, sizeof(ExceptionHandler));
+
+                for (int j = 0; j < method->exception_table_length; j++) {
+                    method->exception_table[j].start_pc = code_attr->CodeAttribute.exception_table[j].start_pc;
+                    method->exception_table[j].end_pc = code_attr->CodeAttribute.exception_table[j].end_pc;
+                    method->exception_table[j].handler_pc = code_attr->CodeAttribute.exception_table[j].handler_pc;
+                    method->exception_table[j].catch_type = code_attr->CodeAttribute.exception_table[j].catch_type;
+                }
+            }
         }
 
         if (method->info.access_flags & ACC_NATIVE)

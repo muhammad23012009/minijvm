@@ -2,7 +2,7 @@
 #define FIELDS_H
 
 #include <stdint.h>
-#include "builtins/builtins.h"
+#include "variant.h"
 
 #define ACC_PUBLIC       0x0001
 #define ACC_PRIVATE      0x0002
@@ -13,11 +13,21 @@
 #define ACC_BRIDGE       0x0040
 #define ACC_VARARGS      0x0080
 #define ACC_NATIVE       0x0100
+#define ACC_ABSTRACT     0x0400
 
 typedef struct Attributes Attributes;
 typedef struct ConstantPool ConstantPool;
 typedef struct Class Class;
 typedef struct builtins builtins;
+typedef struct Reader Reader;
+typedef struct Descriptors Descriptors;
+
+typedef struct ExceptionHandler {
+    uintptr_t start_pc;
+    uintptr_t end_pc;
+    uintptr_t handler_pc;
+    uint16_t catch_type;
+} ExceptionHandler;
 
 typedef struct FieldInfo {
     uint16_t access_flags;
@@ -53,6 +63,8 @@ typedef struct Method {
         uint8_t *data;
         void *native_method;
     };
+    int exception_table_length;
+    ExceptionHandler *exception_table;
     Descriptors *descriptors;
     int max_stack;
     int max_local;

@@ -25,6 +25,7 @@ void stack_push(Stack *stack, Variant value)
         exit(1);
     }
 
+    //printf("stack_push: pushing value of type %d at top %d\n", value.type, stack->top);
     variant_acquire(&value);
     stack->items[stack->top++] = value;
 }
@@ -61,9 +62,22 @@ void stack_dup(Stack *stack)
 
 Variant stack_pop(Stack *stack)
 {
+    if (stack->top - 1 < 0) {
+        fprintf(stderr, "Stack underflow!\n");
+        exit(1);
+    }
+
     Variant value = stack->items[--stack->top];
     variant_release(&value);
+    //printf("Popping value of type %d from stack, new top is %d\n", value.type, stack->top);
     return value;
+}
+
+void stack_clear(Stack *stack)
+{
+    while (stack->top > 0) {
+        variant_release(&stack->items[--stack->top]);
+    }
 }
 
 Stack *stack_new(int max_size)
@@ -79,9 +93,7 @@ Stack *stack_new(int max_size)
 
 void stack_free(Stack *stack)
 {
-    for (int i = 0; i < stack->top; i++) {
-        variant_release(&stack->items[i]);
-    }
+    stack_clear(stack);
 
     free(stack->items);
     free(stack);

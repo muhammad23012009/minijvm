@@ -38,7 +38,15 @@ typedef struct AttributeInfo {
             uint16_t max_locals;
             uint32_t code_length;
             uint8_t *code;
-            // TODO: Parse exceptions and optional attributes
+
+            uint16_t exception_table_length;
+            struct {
+                uint16_t start_pc;
+                uint16_t end_pc;
+                uint16_t handler_pc;
+                uint16_t catch_type;
+            } *exception_table;
+
             struct Attributes *attributes;
         } CodeAttribute;
 

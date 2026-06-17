@@ -109,6 +109,7 @@ extern const char *constant_pool_resolve_class_name(ConstantPool *pool, uint16_t
 extern const char *constant_pool_resolve_field_name(ConstantPool *pool, uint16_t index);
 extern const char *constant_pool_resolve_field_descriptor(ConstantPool *pool, uint16_t index);
 extern int constant_pool_resolve_int(ConstantPool *pool, uint16_t index);
+extern uint32_t constant_pool_resolve_float(ConstantPool *pool, uint16_t index);
 
 extern ConstantPool *constant_pool_new(Reader *reader);
 extern void constant_pool_free(ConstantPool *pool);

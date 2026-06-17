@@ -37,6 +37,9 @@ static void *arr_init_with_capacity(size_t type_size, size_t capacity)
 #define arr_length(arr) \
      ((arr) ? ((struct ArrayMetadata*)(arr) - 1)->length : 0)
 
+#define arr_capacity(arr) \
+     ((arr) ? ((struct ArrayMetadata*)(arr) - 1)->capacity : 0)
+
 #define arr_free(arr) \
     do { \
         if (arr) { \

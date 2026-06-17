@@ -15,19 +15,24 @@ typedef enum {
     VARIANT_TYPE_INT,
     VARIANT_TYPE_LONG,
     VARIANT_TYPE_CLASS,
+    VARIANT_TYPE_FLOAT,
+    VARIANT_TYPE_DOUBLE,
 } VariantType;
 
 typedef struct Variant {
     VariantType type;
-    bool owned;
     int refcnt;
     union {
         Class *class;
         Object *object;
         void *ref;
         int int_val;
-        uint64_t long_val;
+        int64_t long_val;
+        float float_val;
+        double double_val;
     } data;
+    // Hacky way to get around avcall limitations
+    int owned;
 } Variant;
 
 static inline void variant_acquire(Variant *variant)
@@ -40,28 +45,36 @@ static inline void variant_acquire(Variant *variant)
 static inline Variant variant_make_int(int value)
 {
     Variant ret = (Variant){ .type = VARIANT_TYPE_INT, .data.int_val = value, .refcnt = 0 };
-    variant_acquire(&ret);
     return ret;
 }
 
-static inline Variant variant_make_long(uint64_t value)
+static inline Variant variant_make_long(int64_t value)
 {
     Variant ret = (Variant){ .type = VARIANT_TYPE_LONG, .data.long_val = value, .refcnt = 0 };
-    variant_acquire(&ret);
+    return ret;
+}
+
+static inline Variant variant_make_float(float value)
+{
+    Variant ret = (Variant){ .type = VARIANT_TYPE_FLOAT, .data.float_val = value, .refcnt = 0 };
+    return ret;
+}
+
+static inline Variant variant_make_double(double value)
+{
+    Variant ret = (Variant){ .type = VARIANT_TYPE_DOUBLE, .data.double_val = value, .refcnt = 0 };
     return ret;
 }
 
 static inline Variant variant_make_class(Class *class)
 {
     Variant ret = (Variant){ .type = VARIANT_TYPE_CLASS, .data.class = class, .refcnt = 0 };
-    variant_acquire(&ret);
     return ret;
 }
 
 static inline Variant variant_make_object(Object *object)
 {
     Variant ret = (Variant){ .type = VARIANT_TYPE_OBJECT, .data.object = object, .refcnt = 0 };
-    variant_acquire(&ret);
     return ret;
 }
 

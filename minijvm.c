@@ -15,9 +15,13 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _POSIX_C_SOURCE 1
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #include "minijvm.h"
@@ -25,6 +29,7 @@
 #include "builtins/builtins.h"
 #include "gc.h"
 #include "dynarr.h"
+
 
 static jit_context_t s_jit_context;
 static JNI *s_jni;
@@ -44,6 +49,21 @@ JNI *get_jni()
     return s_jni;
 }
 
+void porcodio()
+{
+    // dump the entire stacktrace
+    printf("Segmentation fault! Stack trace:\n");
+    Frame *last_frame = get_current_frame();
+    int i = 0;
+    while (last_frame) {
+        printf("\t#%d: %s::%s, (PC %d)\n", i, last_frame->method->class->name, last_frame->method->name, last_frame->pc);
+        last_frame = last_frame->caller;
+        i++;
+    }
+
+    exit(1);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -52,14 +72,17 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (argc > 2) {
-        fprintf(stderr, "miniJVM: too many arguments!\n");
-        return 1;
-    }
+    // Install a fault handler and print stacktrace
+    struct sigaction sa;
+    sa.sa_handler = porcodio;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
 
     // Setup JIT
     s_jit_context = jit_context_create();
     s_jni = jni_init();
+    // Load our own symbols as well.
+    jni_load(s_jni, NULL);
 
     char filename[2048];
     snprintf(filename, 2048, "%s%s", argv[1], ".class");
@@ -81,6 +104,12 @@ int main(int argc, char *argv[])
     classes_add_class(class_create_builtin("java/lang/invoke/MethodHandles$Lookup", &java_lang_invoke_MethodHandles_lookup_builtins));
     classes_add_class(class_create_builtin("java/lang/invoke/MethodHandle", &java_lang_invoke_MethodHandle_builtins));
     classes_add_class(class_create_builtin("java/lang/invoke/MethodType", &java_lang_invoke_MethodType_builtins));
+    classes_add_class(class_create_builtin("java/io/InputStream", &java_io_InputStream_builtins));
+    classes_add_class(class_create_builtin("java/io/StdinInputStream", &java_io_StdinInputStream_builtins));
+    classes_add_class(class_create_builtin("java/lang/reflect/Field", &java_lang_reflect_Field_builtins));
+    classes_add_class(class_create_builtin("java/lang/Throwable", &java_lang_Throwable_builtins));
+    classes_add_class(class_create_builtin("java/lang/ArrayIndexOutOfBoundsException", &java_lang_ArrayIndexOutOfBoundsException_builtins));
+    classes_add_class(class_create_builtin("sun/misc/Unsafe", &sun_misc_Unsafe_builtins));
 
     if (!classes_add_class(class_parse_file(filename))) {
         classes_free();
@@ -96,10 +125,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    Frame *main_frame = frame_new(main_method->max_stack, main_method->max_local);
-
-    method_execute(main_method, main_frame);
-    frame_free(main_frame);
+    Array *main_args = array_new(classes_get_class("java/lang/String"), argc - 2);
+    for (int i = 2; i < argc; i++) {
+        Object *str_obj = object_new(classes_get_class("java/lang/String"));
+        object_set_field(str_obj, "value", variant_make_ref(argv[i]));
+        main_args->value[i - 2] = variant_make_object(str_obj);
+    }
+    Variant main_args_variant = variant_make_ref(main_args);
+    Variant ret = method_execute(main_method, main_args_variant);
 
     classes_free();
     destroy_dynamic_methods();

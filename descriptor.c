@@ -55,19 +55,26 @@ Descriptor parse_descriptor(const char **string, const char *end)
 
     switch (**string) {
         /* Figure out the basic types first */
-        case 'V': {
+        case 'V':
             descriptor.type = DESCRIPTOR_VOID;
             break;
-        }
-        case 'I': {
+        case 'I': 
             descriptor.type = DESCRIPTOR_INT;
             break;
-        }
         case 'C':
             descriptor.type = DESCRIPTOR_CHAR;
             break;
         case 'Z':
             descriptor.type = DESCRIPTOR_BOOL;
+            break;
+        case 'J':
+            descriptor.type = DESCRIPTOR_LONG;
+            break;
+        case 'F':
+            descriptor.type = DESCRIPTOR_FLOAT;
+            break;
+        case 'D':
+            descriptor.type = DESCRIPTOR_DOUBLE;
             break;
         case 'L': {
             /* Object type */
@@ -96,15 +103,17 @@ Descriptors *descriptors_new(const char *descriptor_str)
     const char *argument_start = descriptor_str;
     const char *argument_end = get_argument_end(argument_start);
     const char *returns_start = *argument_end != '\0' ? argument_end + 1 : NULL;
-
+    descriptors->arguments = NULL;
     descriptors->descriptor = descriptor_str;
-
     descriptors->arguments_count = get_descriptor_count(argument_start);
 
-    descriptors->arguments = calloc(descriptors->arguments_count, sizeof(Descriptor));
+    if (descriptors->arguments_count)
+    {
+        descriptors->arguments = calloc(descriptors->arguments_count, sizeof(Descriptor));
 
-    for (int i = 0; i < descriptors->arguments_count; i++) {
-        descriptors->arguments[i] = parse_descriptor(&argument_start, argument_end);
+        for (int i = 0; i < descriptors->arguments_count; i++) {
+            descriptors->arguments[i] = parse_descriptor(&argument_start, argument_end);
+        }
     }
 
     if (returns_start)

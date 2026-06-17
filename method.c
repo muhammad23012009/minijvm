@@ -15,6 +15,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stddef.h>
 #include <avcall.h>
 
 #include "builtins/builtins.h"
@@ -39,12 +40,23 @@
 
 static Classes *s_classes;
 static Method **s_dynamic_methods = NULL;
+static Frame *s_current_frame = NULL;
 
 #define DISPATCH()          \
     ++frame->pc;            \
     op = data[frame->pc];   \
-    printf("Executing opcode 0x%x at pc %d\n", op, frame->pc); \
     goto *opcodes[op]       \
+
+static inline float ieee754_bits_to_float(uint32_t bits)
+{
+    // TODO: Handle for platforms without IEEE 754 floats
+    union {
+        uint32_t i;
+        float f;
+    } u;
+    u.i = bits;
+    return u.f;
+}
 
 Frame *frame_new(int max_stack, int max_local)
 {
@@ -54,7 +66,6 @@ Frame *frame_new(int max_stack, int max_local)
 
     frame->stack = stack_new(max_stack);
     frame->locals = calloc(max_local, sizeof(Variant));
-    memset(frame->locals, 0, sizeof(Variant) * max_local);
 
     gc_track_frame(frame);
 
@@ -65,6 +76,9 @@ void frame_free(Frame *frame)
 {
     gc_untrack_frame(frame);
 
+    // Go back to the old frame
+    s_current_frame = frame->caller;
+
     for (int i = 0; i < frame->max_locals; i++) {
         variant_release(&frame->locals[i]);
     }
@@ -72,6 +86,11 @@ void frame_free(Frame *frame)
     stack_free(frame->stack);
     free(frame->locals);
     free(frame);
+}
+
+Frame *get_current_frame()
+{
+    return s_current_frame;
 }
 
 Method *add_dynamic_method_native(const char* name, const char* descriptor, jit_function_t function)
@@ -117,7 +136,14 @@ Method *get_method(ConstantPool *pool, Class *class, uint16_t index)
     const char *method_name = constant_pool_resolve_string(pool, method_index);
     const char *descriptor = constant_pool_resolve_string(pool, descriptor_index);
 
+    //printf("Resolving method %s with descriptor %s in class %s\n", method_name, descriptor, class->name);
+
     class_method = class_get_method(class, method_name, descriptor);
+
+    if (!class_method) {
+        fprintf(stderr, "Failed to resolve method %s with descriptor %s in class %s\n", method_name, descriptor, class->name);
+        exit(1);
+    }
 
     return class_method;
 }
@@ -176,12 +202,63 @@ static Variant resolve_bootstrap_argument(ConstantPool *pool, uint16_t index)
     }
 }
 
-void call_native_method(Method *method, Frame *frame)
+static void throw_exception(Object *exception)
+{
+    Frame *frame = s_current_frame;
+    Frame *next_frame;
+    while (frame) {
+        if (frame->method->exception_table_length > 0) {
+            for (int i = 0; i < frame->method->exception_table_length; i++) {
+                ExceptionHandler *handler = &frame->method->exception_table[i];
+                if (frame->pc >= handler->start_pc && frame->pc < handler->end_pc) {
+                    if (handler->catch_type == 0) {
+                        // Catch all exceptions
+                        frame->pc = handler->handler_pc - 1;
+                        printf("Caught a finally block exception at pc %d in method %s in class %s\n", frame->pc + 1, frame->method->name, frame->method->class->name);
+                        stack_clear(frame->stack);
+                        stack_push(frame->stack, variant_make_object(exception));
+                        return;
+                    } else {
+                        Class *catch_class = classes_get_class_from_index(frame->method->class->pool, handler->catch_type);
+                        if (class_is_subclass(exception->class, catch_class)) {
+                            frame->pc = handler->handler_pc - 1;
+                            printf("Caught an exception of class %s at pc %d in method %s in class %s\n", exception->class->name, frame->pc + 1, frame->method->name, frame->method->class->name);
+                            stack_clear(frame->stack);
+                            stack_push(frame->stack, variant_make_object(exception));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        next_frame = frame->caller;
+        if (next_frame)
+            printf("Did not find an exception handler, now looking in method %s in class %s\n", next_frame->method->name, next_frame->method->class->name);
+        frame_free(frame);
+        frame = next_frame;
+    }
+
+    fprintf(stderr, "Uncaught exception of type %s, message: %s\n", exception->class->name, object_get_field(exception, "message")->value.data.ref);
+    exit(1);
+}
+
+Variant call_native_method(Method *method, ...)
 {
     /* Convert all of the arguments from the method's descriptors to native arguments */
     av_alist list;
     Variant return_value = (Variant){0};
+    Variant args[method->descriptors->arguments_count + !(method->info.access_flags & 0x0008)];
     int j = 0;
+
+    va_list args_list;
+    va_start(args_list, method);
+
+    for (int i = 0; i < method->descriptors->arguments_count + !(method->info.access_flags & 0x0008); i++) {
+        args[i] = va_arg(args_list, Variant);
+    }
+
+    va_end(args_list);
 
     if (!strcmp(method->name, "<clinit>")) {
         /* Static initializer */
@@ -204,6 +281,22 @@ void call_native_method(Method *method, Frame *frame)
             av_start_short(list, (short(*)())method->native_method, &return_value.data.int_val);
             return_value.type = VARIANT_TYPE_INT;
             break;
+        case DESCRIPTOR_LONG:
+            av_start_long(list, (long(*)())method->native_method, &return_value.data.long_val);
+            return_value.type = VARIANT_TYPE_LONG;
+            break;
+        case DESCRIPTOR_BOOL:
+            av_start_uchar(list, (unsigned char(*)())method->native_method, &return_value.data.int_val);
+            return_value.type = VARIANT_TYPE_INT;
+            break;
+        case DESCRIPTOR_FLOAT:
+            av_start_float(list, (float(*)())method->native_method, &return_value.data.float_val);
+            return_value.type = VARIANT_TYPE_FLOAT;
+            break;
+        case DESCRIPTOR_DOUBLE:
+            av_start_double(list, (double(*)())method->native_method, &return_value.data.double_val);
+            return_value.type = VARIANT_TYPE_DOUBLE;
+            break;
         case DESCRIPTOR_OBJECT:
             av_start_ptr(list, (Object*(*)())method->native_method, Object *, &return_value.data.object);
             return_value.type = VARIANT_TYPE_OBJECT;
@@ -221,26 +314,39 @@ void call_native_method(Method *method, Frame *frame)
 
     /* If the function isn't static, push the "this" pointer */
     if (!(method->info.access_flags & 0x0008)) {
-        av_ptr(list, Object *, frame->locals[j++].data.object);
+        av_ptr(list, Object *, args[j++].data.object);
     }
 
-    FOREACH_DESCRIPTOR(method->descriptors) {
+    Descriptor descriptor;
+    FOREACH_DESCRIPTOR(method->descriptors, descriptor) {
         // If the current argument is an array, just pass the Array pointer
         if (descriptor.array_dimesions_count > 0) {
-            av_ptr(list, Array *, frame->locals[j].data.ref);
+            av_ptr(list, Array *, args[j].data.ref);
             j++;
             continue;
         }
 
         switch (descriptor.type) {
             case DESCRIPTOR_INT:
-                av_int(list, frame->locals[j].data.int_val);
+                av_int(list, args[j].data.int_val);
                 break;
             case DESCRIPTOR_OBJECT:
-                av_ptr(list, Object *, frame->locals[j].data.object);
+                av_ptr(list, Object *, args[j].data.object);
                 break;
             case DESCRIPTOR_CHAR:
-                av_short(list, frame->locals[j].data.int_val);
+                av_short(list, args[j].data.int_val);
+                break;
+            case DESCRIPTOR_LONG:
+                av_long(list, args[j].data.long_val);
+                break;
+            case DESCRIPTOR_BOOL:
+                av_uchar(list, args[j].data.int_val);
+                break;
+            case DESCRIPTOR_FLOAT:
+                av_float(list, args[j].data.float_val);
+                break;
+            case DESCRIPTOR_DOUBLE:
+                av_double(list, args[j].data.double_val);
                 break;
             case DESCRIPTOR_VOID:
                 break;
@@ -252,19 +358,41 @@ void call_native_method(Method *method, Frame *frame)
 call:
     av_call(list);
 
-    if (DESCRIPTORS_GET_RETURN_TYPE(method->descriptors) != DESCRIPTOR_VOID)
-        stack_push(frame->stack, return_value);
+    return return_value;
 }
 
-void method_execute(Method *method, Frame *frame)
+/* Return the result of executing the method */
+Variant method_execute(Method *method, ...)
 {
-    printf("Beginning execution of method %s in frame %p\n", method->name, (void*)frame);
     /* Access code of method */
+    Frame *frame = frame_new(method->max_stack, method->max_local);
     uint8_t *data = method->data;
     ConstantPool *pool = method->class->pool;
     uint8_t op;
+    va_list args;
 
-    static void *opcodes[] = {
+    va_start(args, method);
+
+    // Improve later
+    // Note: This is currently hardcoded to pull arguments like it would from the stack, i.e. backwards
+    // Maybe improve this later?
+    if (method->info.access_flags & ACC_STATIC) {
+        for (int i = 0; i < method->descriptors->arguments_count; ++i) {
+            frame->locals[i] = va_arg(args, Variant);
+        }
+    } else {
+        for (int i = 0; i < method->descriptors->arguments_count + 1; ++i) {
+            frame->locals[i] = va_arg(args, Variant);
+        }
+    }
+    va_end(args);
+
+    frame->caller = s_current_frame;
+    frame->method = method;
+    s_current_frame = frame;
+
+    printf("Beginning execution of method %s in class %s in frame %p\n", method->name, method->class->name, (void*)frame);
+    const static void *opcodes[] = {
         [1] = &&aconst_null,
         [2] = &&iconst_m1,
         [3] = &&iconst_0,
@@ -273,14 +401,27 @@ void method_execute(Method *method, Frame *frame)
         [6] = &&iconst_3,
         [7] = &&iconst_4,
         [8] = &&iconst_5,
+        [9] = &&lconst_0,
+        [10] = &&lconst_1,
+        [11] = &&fconst_0,
+        [12] = &&fconst_1,
+        [13] = &&fconst_2,
+        [14] = &&dconst_0,
+        [15] = &&dconst_1,
         [16] = &&bipush,
         [17] = &&sipush,
         [18] = &&ldc,
+        [19] = &&ldc_w,
         [20] = &&ldc2_w,
         [21] = &&iload,
+        [22] = &&lload,
+        [23] = &&fload,
+        [24] = &&dload,
         [25] = &&aload,
         [26 ... 29] = &&iload_x,
+        [34 ... 37] = &&fload_x,
         [42 ... 45] = &&aload_x,
+        [46] = &&iaload,
         [50] = &&aaload,
         [54] = &&istore,
         [58] = &&astore,
@@ -288,14 +429,45 @@ void method_execute(Method *method, Frame *frame)
         [75 ... 78] = &&astore_x,
         [79] = &&iastore,
         [83] = &&aastore,
+        [85] = &&castore,
         [87] = &&pop,
         [89] = &&dup,
+        [90] = &&dup_x1,
         [96] = &&iadd,
+        [97] = &&ladd,
+        [100] = &&isub,
+        [104] = &&imul,
+        [106] = &&fmul,
         [108] = &&idiv,
+        [120] = &&ishl,
+        [121] = &&lshl,
+        [122] = &&ishr,
+        [123] = &&lshr,
+        [124] = &&iushr,
+        [126] = &&iand,
+        [127] = &&land,
+        [128] = &&ior,
+        [130] = &&ixor,
         [132] = &&iinc,
+        [133] = &&i2l,
+        [134] = &&i2f,
+        [139] = &&f2i,
+        [146] = &&i2c,
+        [149 ... 150] = &&fcmp_x,
+        [153] = &&ifeq,
+        [154] = &&ifne,
+        [155] = &&iflt,
+        [156] = &&ifge,
+        [157] = &&ifgt,
+        [158] = &&ifle,
         [159 ... 164] = &&if_cmpx,
+        [165] = &&if_acmpeq,
+        [166] = &&if_acmpne,
         [167] = &&j_goto,
         [172] = &&ireturn,
+        [173] = &&lreturn,
+        [174] = &&freturn,
+        [175] = &&dreturn,
         [176] = &&areturn,
         [177] = &&j_return,
         [178] = &&getstatic,
@@ -311,7 +483,13 @@ void method_execute(Method *method, Frame *frame)
         [188] = &&newarray,
         [189] = &&anewarray,
         [190] = &&arraylength,
+        [191] = &&athrow,
+        [192] = &&checkcast,
+        [193] = &&instanceof,
+        [194] = &&monitorenter,
+        [195] = &&monitorexit,
         [197] = &&multianewarray,
+        [198] = &&ifnull,
         [199] = &&ifnonnull,
     };
 
@@ -325,40 +503,61 @@ void method_execute(Method *method, Frame *frame)
         stack_push(frame->stack, variant_make_ref(NULL));
         DISPATCH();
 
-    iconst_m1: {
+    iconst_m1:
         stack_push_int(frame->stack, -1);
         DISPATCH();
-    }
 
-    iconst_0: {
+    iconst_0:
         stack_push_int(frame->stack, 0);
         DISPATCH();
-    }
 
-    iconst_1: {
+    iconst_1:
         stack_push_int(frame->stack, 1);
         DISPATCH();
-    }
 
-    iconst_2: {
+    iconst_2:
         stack_push_int(frame->stack, 2);
         DISPATCH();
-    }
 
-    iconst_3: {
+    iconst_3:
         stack_push_int(frame->stack, 3);
         DISPATCH();
-    }
 
-    iconst_4: {
+    iconst_4:
         stack_push_int(frame->stack, 4);
         DISPATCH();
-    }
 
-    iconst_5: {
+    iconst_5:
         stack_push_int(frame->stack, 5);
         DISPATCH();
-    }
+
+    lconst_0:
+        stack_push(frame->stack, variant_make_long(0));
+        DISPATCH();
+
+    lconst_1:
+        stack_push(frame->stack, variant_make_long(1));
+        DISPATCH();
+
+    fconst_0:
+        stack_push(frame->stack, variant_make_float(0.0f));
+        DISPATCH();
+
+    fconst_1:
+        stack_push(frame->stack, variant_make_float(1.0f));
+        DISPATCH();
+
+    fconst_2:
+        stack_push(frame->stack, variant_make_float(2.0f));
+        DISPATCH();
+
+    dconst_0:
+        stack_push(frame->stack, variant_make_double(0.0));
+        DISPATCH();
+
+    dconst_1:
+        stack_push(frame->stack, variant_make_double(1.0));
+        DISPATCH();
 
     bipush: {
         uint8_t byte = data[++frame->pc];
@@ -371,6 +570,7 @@ void method_execute(Method *method, Frame *frame)
         stack_push_int(frame->stack, shrt);
         DISPATCH();
 
+    // Maybe combine the LDC calls
     ldc: {
         uint8_t index = data[++frame->pc];
         uint8_t tag = constant_pool_get_tag(pool, index);
@@ -379,14 +579,23 @@ void method_execute(Method *method, Frame *frame)
         switch (tag) {
             case CONSTANT_CLASS: {
                 Class *class = classes_get_class_from_index(pool, index);
-                variant.data.class = class;
-                variant.type = VARIANT_TYPE_CLASS;
+                Object *class_object = object_new(classes_get_class("java/lang/Class"));
+                object_get_field(class_object, "class")->value.data.class = class;
+                variant.type = VARIANT_TYPE_OBJECT;
+                variant.data.object = class_object;
                 break;
             }
 
             case CONSTANT_INT: {
                 variant.data.int_val = constant_pool_resolve_int(pool, index);
                 variant.type = VARIANT_TYPE_INT;
+                break;
+            }
+
+            case CONSTANT_FLOAT: {
+                uint32_t float_bits = constant_pool_resolve_float(pool, index);
+                variant.data.float_val = ieee754_bits_to_float(float_bits);
+                variant.type = VARIANT_TYPE_FLOAT;
                 break;
             }
 
@@ -403,6 +612,61 @@ void method_execute(Method *method, Frame *frame)
                 variant.type = VARIANT_TYPE_REF;
                 break;
             }
+
+            default:
+                fprintf(stderr, "Unsupported constant tag 0x%x at index %u\n", tag, index);
+                exit(1);
+        }
+
+        stack_push(frame->stack, variant);
+        DISPATCH();
+    }
+
+    ldc_w: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        uint8_t tag = constant_pool_get_tag(pool, index);
+        Variant variant = {0};
+
+        switch (tag) {
+            case CONSTANT_CLASS: {
+                Class *class = classes_get_class_from_index(pool, index);
+                Object *class_object = object_new(classes_get_class("java/lang/Class"));
+                object_get_field(class_object, "class")->value.data.class = class;
+                variant.type = VARIANT_TYPE_OBJECT;
+                variant.data.object = class_object;
+                break;
+            }
+
+            case CONSTANT_INT: {
+                variant.data.int_val = constant_pool_resolve_int(pool, index);
+                variant.type = VARIANT_TYPE_INT;
+                break;
+            }
+
+            case CONSTANT_FLOAT: {
+                uint32_t float_bits = constant_pool_resolve_float(pool, index);
+                variant.data.float_val = ieee754_bits_to_float(float_bits);
+                variant.type = VARIANT_TYPE_FLOAT;
+                break;
+            }
+
+            case CONSTANT_STRING: {
+                Object *str_obj = object_new(classes_get_class("java/lang/String"));
+                object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
+                variant.data.object = str_obj;
+                variant.type = VARIANT_TYPE_OBJECT;
+                break;
+            }
+
+            case CONSTANT_UTF8: {
+                variant.data.ref = constant_pool_resolve_string(pool, index);
+                variant.type = VARIANT_TYPE_REF;
+                break;
+            }
+
+            default:
+                fprintf(stderr, "Unsupported constant tag 0x%x at index %u\n", tag, index);
+                exit(1);
         }
 
         stack_push(frame->stack, variant);
@@ -422,6 +686,18 @@ void method_execute(Method *method, Frame *frame)
                 variant = variant_make_long(long_val);
                 break;
             }
+    
+            case CONSTANT_DOUBLE: {
+                uint64_t double_bits;
+                memcpy(&double_bits, &pool->pool[index].long_val.low_bytes, sizeof(uint32_t));
+                memcpy((uint8_t*)&double_bits + 4, &pool->pool[index].long_val.high_bytes, sizeof(uint32_t));
+                union {
+                    uint64_t i;
+                    double d;
+                } u = { .i = double_bits };
+                variant = variant_make_double(u.d);
+                break;
+            }
         }
 
         stack_push(frame->stack, variant);
@@ -429,6 +705,24 @@ void method_execute(Method *method, Frame *frame)
     }
 
     iload: {
+        uint8_t index = data[++frame->pc];
+        stack_push(frame->stack, frame->locals[index]);
+        DISPATCH();
+    }
+
+    lload: {
+        uint8_t index = data[++frame->pc];
+        stack_push(frame->stack, frame->locals[index]);
+        DISPATCH();
+    }
+
+    fload: {
+        uint8_t index = data[++frame->pc];
+        stack_push(frame->stack, frame->locals[index]);
+        DISPATCH();
+    }
+
+    dload: {
         uint8_t index = data[++frame->pc];
         stack_push(frame->stack, frame->locals[index]);
         DISPATCH();
@@ -447,9 +741,35 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    fload_x: {
+        uint8_t local_index = op - 34;
+        Variant item = frame->locals[local_index];
+        stack_push(frame->stack, item);
+        DISPATCH();
+    }
+
     aload_x: {
         uint8_t local_index = op - 42;
         stack_push(frame->stack, frame->locals[local_index]);
+        DISPATCH();
+    }
+
+    iaload: {
+        int index = stack_pop(frame->stack).data.int_val;
+        int* array = stack_pop(frame->stack).data.ref;
+
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            stack_push_int(frame->stack, array[index]);
+        }
+
         DISPATCH();
     }
 
@@ -481,7 +801,8 @@ void method_execute(Method *method, Frame *frame)
 
     astore_x: {
         uint8_t local_index = op - 75;
-        frame->locals[local_index] = stack_pop(frame->stack);
+        Variant value = stack_pop(frame->stack);
+        frame->locals[local_index] = value;
         DISPATCH();
     }
 
@@ -490,7 +811,17 @@ void method_execute(Method *method, Frame *frame)
         int index = stack_pop(frame->stack).data.int_val;
         int* array = stack_pop(frame->stack).data.ref;
 
-        arr_push(array, value);
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            arr_push(array, value);
+        }
 
         DISPATCH();
     }
@@ -503,6 +834,26 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    castore: {
+        uint16_t value = stack_pop(frame->stack).data.int_val;
+        int index = stack_pop(frame->stack).data.int_val;
+        uint16_t* array = stack_pop(frame->stack).data.ref;
+
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            arr_push(array, value);
+        }
+
+        DISPATCH();
+    }
+
     pop:
         stack_pop(frame->stack);
         DISPATCH();
@@ -511,10 +862,44 @@ void method_execute(Method *method, Frame *frame)
         stack_dup(frame->stack);
         DISPATCH();
 
+    dup_x1: {
+        // Genuinely fuck you oracle what is this fucking mess
+        Variant val1 = stack_pop(frame->stack);
+        Variant val2 = stack_pop(frame->stack);
+        stack_push(frame->stack, val1);
+        stack_push(frame->stack, val2);
+        stack_push(frame->stack, val1);
+        DISPATCH();
+    }
+
     iadd:
         int a1 = stack_pop(frame->stack).data.int_val;
         int a2 = stack_pop(frame->stack).data.int_val;
         stack_push_int(frame->stack, a1 + a2);
+        DISPATCH();
+
+    ladd:
+        long la2 = stack_pop(frame->stack).data.long_val;
+        long la1 = stack_pop(frame->stack).data.long_val;
+        stack_push(frame->stack, variant_make_long(la1 + la2));
+        DISPATCH();
+
+    isub:
+        int sub2 = stack_pop(frame->stack).data.int_val;
+        int sub1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, sub1 - sub2);
+        DISPATCH();
+
+    imul:
+        int m2 = stack_pop(frame->stack).data.int_val;
+        int m1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, m1 * m2);
+        DISPATCH();
+
+    fmul:
+        float fm2 = stack_pop(frame->stack).data.float_val;
+        float fm1 = stack_pop(frame->stack).data.float_val;
+        stack_push(frame->stack, variant_make_float(fm1 * fm2));
         DISPATCH();
 
     idiv:
@@ -523,11 +908,164 @@ void method_execute(Method *method, Frame *frame)
         stack_push_int(frame->stack, d1 / d2);
         DISPATCH();
 
+    ishl:
+        int shl2 = stack_pop(frame->stack).data.int_val;
+        int shl1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, shl1 << shl2);
+        DISPATCH();
+
+    lshl:
+        long lshl2 = stack_pop(frame->stack).data.long_val;
+        long lshl1 = stack_pop(frame->stack).data.long_val;
+        stack_push(frame->stack, variant_make_long(lshl1 << lshl2));
+        DISPATCH();
+
+    ishr:
+        int sh2 = stack_pop(frame->stack).data.int_val;
+        int sh1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, sh1 >> sh2);
+        DISPATCH();
+
+    lshr:
+        long lsh2 = stack_pop(frame->stack).data.long_val;
+        long lsh1 = stack_pop(frame->stack).data.long_val;
+        stack_push(frame->stack, variant_make_long(lsh1 >> lsh2));
+        DISPATCH();
+
+    iushr:
+        int s2 = stack_pop(frame->stack).data.int_val;
+        int s1 = stack_pop(frame->stack).data.int_val;
+        // TODO: Check if we're shifting properly
+        stack_push_int(frame->stack, (unsigned int)s1 >> s2);
+        DISPATCH();
+
+    iand:
+        int and2 = stack_pop(frame->stack).data.int_val;
+        int and1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, and1 & and2);
+        DISPATCH();
+
+    land:
+        long land2 = stack_pop(frame->stack).data.long_val;
+        long land1 = stack_pop(frame->stack).data.long_val;
+        stack_push(frame->stack, variant_make_long(land1 & land2));
+        DISPATCH();
+
+    ior:
+        int or2 = stack_pop(frame->stack).data.int_val;
+        int or1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, or1 | or2);
+        DISPATCH();
+
+    ixor:
+        int x2 = stack_pop(frame->stack).data.int_val;
+        int x1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, x1 ^ x2);
+        DISPATCH();
+
     iinc:
         uint8_t index = data[++frame->pc];
         int8_t const_val = data[++frame->pc];
         frame->locals[index].data.int_val += const_val;
         DISPATCH();
+
+    i2l: {
+        int value = stack_pop(frame->stack).data.int_val;
+        stack_push(frame->stack, variant_make_long((int64_t)value));
+        DISPATCH();
+    }
+
+    i2f: {
+        int value = stack_pop(frame->stack).data.int_val;
+        stack_push(frame->stack, variant_make_float((float)value));
+        DISPATCH();
+    }
+
+    f2i: {
+        float value = stack_pop(frame->stack).data.float_val;
+        stack_push_int(frame->stack, (int)value);
+        DISPATCH();
+    }
+
+    i2c: {
+        int value = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, (uint16_t)(value & 0xFFFF));
+        DISPATCH();
+    }
+
+    fcmp_x: {
+        // TODO: Handle NaN
+        float f2 = stack_pop(frame->stack).data.float_val;
+        float f1 = stack_pop(frame->stack).data.float_val;
+        if (f1 < f2) {
+            stack_push_int(frame->stack, -1);
+        } else if (f1 == f2) {
+            stack_push_int(frame->stack, 0);
+        } else {
+            stack_push_int(frame->stack, 1);
+        }
+        DISPATCH();
+    }
+
+    ifeq: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value == 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    ifne: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value != 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    iflt: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value < 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    ifge: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value >= 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    ifgt: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value > 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    ifle: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        int value = stack_pop(frame->stack).data.int_val;
+        if (value <= 0) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
 
     if_cmpx: {
         uint8_t cond = op - 159;
@@ -570,6 +1108,31 @@ void method_execute(Method *method, Frame *frame)
             DISPATCH();
     }
 
+    if_acmpeq: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        Variant value2 = stack_pop(frame->stack);
+        Variant value1 = stack_pop(frame->stack);
+
+        // TODO: Compare types
+        if (value1.data.ref == value2.data.ref) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
+    if_acmpne: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        Variant value2 = stack_pop(frame->stack);
+        Variant value1 = stack_pop(frame->stack);
+
+        if (value1.data.ref != value2.data.ref) {
+            frame->pc += branch_offset - 3;
+        }
+
+        DISPATCH();
+    }
+
     j_goto: {
         int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
         /* Two bytes for the branch offset, and one byte for DISPATCH */
@@ -577,14 +1140,65 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
-    ireturn:
-        return;
+    ireturn: {
+        Variant ret = stack_pop(frame->stack);
+        // Sanity check
+        if (ret.type != VARIANT_TYPE_INT) {
+            fprintf(stderr, "Expected int return type but got variant type %d\n", ret.type);
+            exit(1);
+        }
+        frame_free(frame);
 
-    areturn:
-        return;
+        return ret;
+    }
 
-    j_return:
-        return;
+    lreturn: {
+        Variant ret = stack_pop(frame->stack);
+        // Sanity check
+        if (ret.type != VARIANT_TYPE_LONG) {
+            fprintf(stderr, "Expected long return type but got variant type %d\n", ret.type);
+            exit(1);
+        }
+        frame_free(frame);
+
+        return ret;
+    }
+
+    freturn: {
+        Variant ret = stack_pop(frame->stack);
+        // Sanity check
+        if (ret.type != VARIANT_TYPE_FLOAT) {
+            fprintf(stderr, "Expected float return type but got variant type %d\n", ret.type);
+            exit(1);
+        }
+        frame_free(frame);
+
+        return ret;
+    }
+
+    dreturn: {
+        Variant ret = stack_pop(frame->stack);
+        // Sanity check
+        if (ret.type != VARIANT_TYPE_DOUBLE) {
+            fprintf(stderr, "Expected double return type but got variant type %d\n", ret.type);
+            exit(1);
+        }
+        frame_free(frame);
+
+        return ret;
+    }
+
+    areturn: {
+        Variant ret = stack_pop(frame->stack);
+        frame_free(frame);
+
+        return ret;
+    }
+
+    j_return: {
+        frame_free(frame);
+        return (Variant){0};
+    }
 
     getstatic: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
@@ -612,7 +1226,7 @@ void method_execute(Method *method, Frame *frame)
 
         /* TODO: Implement value conversion */
         field->value = stack_pop(frame->stack);
-        if (field->value.type == VARIANT_TYPE_OBJECT) {
+        if (field->value.type == VARIANT_TYPE_OBJECT && field->value.data.object) {
             field->value.data.object->parent_field = field;
         }
         DISPATCH();
@@ -621,7 +1235,7 @@ void method_execute(Method *method, Frame *frame)
     getfield: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Object *object = stack_pop(frame->stack).data.object;
-        const char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
+        const char *field_name = constant_pool_resolve_field_name(pool, index);
         Field *field = object_get_field(object, field_name);
 
         stack_push(frame->stack, field->value);
@@ -633,7 +1247,7 @@ void method_execute(Method *method, Frame *frame)
         Variant value = stack_pop(frame->stack);
         Object *object = stack_pop(frame->stack).data.object;
 
-        const char *field_name = constant_pool_resolve_field_name(object->class->pool, index);
+        const char *field_name = constant_pool_resolve_field_name(pool, index);
         object_set_field(object, field_name, value);
 
         if (value.type == VARIANT_TYPE_OBJECT) {
@@ -642,82 +1256,61 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
-    invokevirtual: {
+    invokevirtual:
+    invokespecial: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(pool, index);
+        // Fake method, we'll find the real one from the object we were passed
         Method *class_method = get_method(pool, class, index);
+        Variant ret;
+        av_alist list;
+        Variant args[class_method->descriptors->arguments_count + 1];
 
-        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
-
-        int arguments_count = class_method->descriptors->arguments_count;
-
-        for (int i = arguments_count; i != 0; i--) {
-            Variant item = stack_pop(frame->stack);
-            subframe->locals[i] = item;
+        for (int i = class_method->descriptors->arguments_count; i >= 0; --i) {
+            args[i] = stack_pop(frame->stack);
         }
-        Variant item = stack_pop(frame->stack);
-        subframe->locals[0] = item;
 
-        if (class->built_in) {
-            call_native_method(class_method, subframe);
-        } else {
-            method_execute(class_method, subframe);
+        if (class_method->info.access_flags & ACC_ABSTRACT) {
+            class = args[0].data.object->class;
+            const char* method_name = class_method->name;
+            const char* method_descriptor = class_method->descriptors->descriptor;
+            while (class) {
+                printf("Class name is %s\n", class->name);
+                printf("Class parent name is %s\n", class->parent ? class->parent->name : "NULL");
+                printf("Looking for method %s with descriptor %s in class %s\n", method_name, method_descriptor, class->name);
+                class_method = class_get_method(class, method_name, method_descriptor);
+                if (class_method) {
+                    break;
+                }
+                class = class->parent;
+            }
+
+            if (class_method == NULL) {
+                fprintf(stderr, "Failed to find implementation for abstract method %s with descriptor %s\n", class_method->name, class_method->descriptors->descriptor);
+                exit(1);
+            }
         }
+
+        // This feels really ugly, I guess we can clean it up later
+        if (class->built_in)
+            av_start_struct(list, call_native_method, Variant, 3, &ret);
+        else
+            av_start_struct(list, method_execute, Variant, 3, &ret);
+
+        av_ptr(list, Method *, class_method);
+
+        // Now make the arguments in a "sane" order
+        for (int i = 0; i < class_method->descriptors->arguments_count + 1; ++i) {
+            av_struct(list, Variant, args[i]);
+        }
+
+        av_call(list);
 
         //printf("finished execution of submethod %s\n", class_method->name);
-        /* TODO: Instead of doing this, pass the frame of the invoker 
-         * into the method being executed, and then push the result into
-         * the invoker frame on return.
-         */
-        /* Take the returned value from the method, if it had one */
-        if (class_method->descriptors &&
-            class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID) {
-            Variant item = stack_pop(subframe->stack);
-            stack_push(frame->stack, item);
-        }
 
-        frame_free(subframe);
-        DISPATCH();
-    }
+        if (class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID)
+            stack_push(frame->stack, ret);
 
-    invokespecial: {
-        /* TODO: https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-6.html#jvms-6.5.invokespecial 
-         * Implement all of this
-         */
-
-        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
-        Class *class = classes_get_class_from_index(pool, index);
-        Method *class_method = get_method(pool, class, index);
-
-        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
-        //printf("made new subframe with max stack %d\n", class_method->max_stack);
-
-        int arguments_count = class_method->descriptors->arguments_count;
-
-        for (int i = 1; i <= arguments_count; i++) {
-            Variant item = stack_pop(frame->stack);
-            subframe->locals[i] = item;
-        }
-
-        Variant item = stack_pop(frame->stack);
-        subframe->locals[0] = item;
-
-        if (class->built_in) {
-            class->pool = pool;
-            call_native_method(class_method, subframe);
-        } else {
-            method_execute(class_method, subframe);
-        }
-
-        /* Take the returned value from the method, if it had one */
-        if (class_method->descriptors &&
-            class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID) {
-            Variant item = stack_pop(subframe->stack);
-            printf("got return\n");
-            stack_push(frame->stack, item);
-        }
-
-        frame_free(subframe);
         DISPATCH();
     }
 
@@ -725,28 +1318,33 @@ void method_execute(Method *method, Frame *frame)
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(pool, index);
         Method *class_method = get_method(pool, class, index);
-        printf("Descriptors: %s\n", class_method->descriptors->descriptor);
-        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
-        int arguments_count = class_method->descriptors->arguments_count;
+        av_alist list;
+        Variant ret;
 
-        for (int i = arguments_count - 1; i >= 0; i--) {
-            Variant item = stack_pop(frame->stack);
-            subframe->locals[i] = item;
+        if (!class->static_initialized)
+            class_initialize_static(class);
+
+        if (class->built_in || class_method->info.access_flags & ACC_NATIVE)
+            av_start_struct(list, call_native_method, Variant, 3, &ret);
+        else
+            av_start_struct(list, method_execute, Variant, 3, &ret);
+
+        av_ptr(list, Method *, class_method);
+
+        Variant args[class_method->descriptors->arguments_count];
+        for (int i = class_method->descriptors->arguments_count - 1; i >= 0; --i) {
+            args[i] = stack_pop(frame->stack);
         }
 
-        if (class->built_in || class_method->info.access_flags & ACC_NATIVE) {
-            call_native_method(class_method, subframe);
-        } else {
-            method_execute(class_method, subframe);
+        for (int i = 0; i < class_method->descriptors->arguments_count; i++) {
+            av_struct(list, Variant, args[i]);
         }
 
-        if (class_method->descriptors &&
-            class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID) {
-            Variant item = stack_pop(subframe->stack);
-            stack_push(frame->stack, item);
-        }
+        av_call(list);
 
-        frame_free(subframe);
+        if (class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID)
+            stack_push(frame->stack, ret);
+
         DISPATCH();
     }
 
@@ -755,47 +1353,54 @@ void method_execute(Method *method, Frame *frame)
         frame->pc += 2;
         Class *interface = classes_get_class_from_index(pool, index);
         Method *interface_method = get_method(pool, interface, index);
-        Object *real_class = NULL;
+        Class *real_class = NULL;
 
         int arguments_count = interface_method->descriptors->arguments_count;
         Variant *temp_locals = NULL;
-        if (arguments_count)
-        {
-            temp_locals = malloc(sizeof(Variant) * (arguments_count + !!(interface_method->info.access_flags & 0x0008)));
-            for (int i = 1; i <= arguments_count; ++i) {
-                temp_locals[i] = stack_pop(frame->stack);
+
+        temp_locals = calloc((arguments_count + !(interface_method->info.access_flags & ACC_STATIC)), sizeof(Variant));
+        // Arguments, and one for "this" if it's not a static method
+        for (int i = arguments_count - !!(interface_method->info.access_flags & ACC_STATIC); i >= 0; --i) {
+            temp_locals[i] = stack_pop(frame->stack);
+        }
+
+        real_class = temp_locals[0].data.object->class;
+
+        Method *methodd = NULL;
+        while (real_class) {
+            methodd = class_get_method(real_class, interface_method->name, interface_method->descriptors->descriptor);
+            if (methodd) {
+                break;
             }
+            real_class = real_class->parent;
         }
 
-        if (!(interface_method->info.access_flags & 0x0008)) {
-            if (!temp_locals)
-                temp_locals = malloc(sizeof(Variant));
-
-            temp_locals[0] = stack_pop(frame->stack);
-            real_class = temp_locals[0].data.object;
-        }
-
-        printf("invokeinterface on interface %s\n", interface->name);
-
-        Method *method = class_get_method(real_class->class, interface_method->name, interface_method->descriptors->descriptor);
-        if (!method) {
-            fprintf(stderr, "No implementation found for method %s with descriptor %s in class %s\n",
-                    interface_method->name, interface_method->descriptors->descriptor, real_class->class->name);
+        if (!methodd) {
+            fprintf(stderr, "Failed to find implementation for interface method %s with descriptor %s\n", interface_method->name, interface_method->descriptors->descriptor);
             exit(1);
         }
 
-        Frame *subframe = frame_new(method->max_stack, method->max_local);
-        for (int i = 0; i < arguments_count + !!(interface_method->info.access_flags & 0x0008); ++i) {
-            subframe->locals[i] = temp_locals[i];
+        av_alist list;
+        Variant ret;
+
+        if (methodd->class->built_in || methodd->info.access_flags & ACC_NATIVE)
+            av_start_struct(list, call_native_method, Variant, 3, &ret);
+        else
+            av_start_struct(list, method_execute, Variant, 3, &ret);
+
+        av_ptr(list, Method *, methodd);
+
+        for (int i = 0; i < arguments_count + !(interface_method->info.access_flags & 0x0008); i++) {
+            Variant arg = temp_locals[i];
+            av_struct(list, Variant, arg);
         }
+
         free(temp_locals);
 
-        if (method->class->built_in || method->info.access_flags & ACC_NATIVE) {
-            call_native_method(method, subframe);
-        } else {
-            method_execute(method, subframe);
-        }
-        frame_free(subframe);
+        av_call(list);
+
+        if (methodd->descriptors->return_descriptor.type != DESCRIPTOR_VOID)
+            stack_push(frame->stack, ret);
 
         DISPATCH();
     }
@@ -835,8 +1440,8 @@ void method_execute(Method *method, Frame *frame)
         // Try to resolve this dynamic method now.
         Class *class = classes_get_class_from_index(pool, ref_index);
         Method *class_method = get_method(pool, class, ref_index);
-        Frame *subframe = frame_new(class_method->max_stack, class_method->max_local);
-
+        av_alist bootstrap_list;
+        Variant bootstrap_ret;
         Object *method_string = object_new(classes_get_class("java/lang/String"));
         Object *lookup = object_new(classes_get_class("java/lang/invoke/MethodHandles$Lookup"));
 
@@ -846,17 +1451,27 @@ void method_execute(Method *method, Frame *frame)
         object_set_field(method_type, "descriptor", variant_make_ref(field_descriptor));
         object_set_field(method_string, "value", variant_make_ref(constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info)));
 
-        // Prepare the arguments for the bootstrap method.
-        int i = !(class_method->info.access_flags & 0x0008); // If the method is static, we don't push the "this" pointer, otherwise we do.
+        if (class->built_in)
+            av_start_struct(bootstrap_list, call_native_method, Variant, 3, &bootstrap_ret);
+        else
+            av_start_struct(bootstrap_list, method_execute, Variant, 3, &bootstrap_ret);
 
-        // First argument is a reference to MethodHandles.Lookup object, obtained as by calling MethodHandles.lookup().
-        subframe->locals[i++] = variant_make_object(lookup);
+        av_ptr(bootstrap_list, Method *, class_method);
 
-        // Second argument is a reference to a string containing the name of the method to be linked, obtained from the constant pool.
-        subframe->locals[i++] = variant_make_object(method_string);
+        // I'm sorry for this gore, but I don't feel like fixing this right now. Arguments are pushed backwards
+        {
+            // First argument is a reference to MethodHandles.Lookup object, obtained as by calling MethodHandles.lookup().
+            Variant arg = variant_make_object(lookup);
+            av_struct(bootstrap_list, Variant, arg);
 
-        // Third argument is a reference to a MethodType object representing the type of this method, obtained while resolving the bootstrap method.
-        subframe->locals[i++] = variant_make_object(method_type);
+            // Second argument is a reference to a string containing the name of the method to be linked, obtained from the constant pool.
+            arg = variant_make_object(method_string);
+            av_struct(bootstrap_list, Variant, arg);
+
+            // Third argument is a reference to a MethodType object representing the type of this method, obtained while resolving the bootstrap method.
+            arg = variant_make_object(method_type);
+            av_struct(bootstrap_list, Variant, arg);
+        }
 
         // And finally, now we push the bootstrap arguments according to the bootstrap method descriptor.
         uint16_t remaining_bootstrap_arguments = bootstrap_arguments_count;
@@ -874,7 +1489,8 @@ void method_execute(Method *method, Frame *frame)
                     array_set_value(args_array, k, resolve_bootstrap_argument(pool, bootstrap_argument_index));
                 }
 
-                subframe->locals[i++] = variant_make_ref(args_array);
+                Variant arr = variant_make_ref(args_array);
+                av_struct(bootstrap_list, Variant, arr);
                 remaining_bootstrap_arguments = 0;
                 continue;
             }
@@ -885,35 +1501,43 @@ void method_execute(Method *method, Frame *frame)
             }
 
             uint16_t bootstrap_argument_index = bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].bootstrap_arguments[bootstrap_argument_cursor++];
-            subframe->locals[i++] = resolve_bootstrap_argument(pool, bootstrap_argument_index);
+            Variant arg = resolve_bootstrap_argument(pool, bootstrap_argument_index);
+            av_struct(bootstrap_list, Variant, arg);
             remaining_bootstrap_arguments--;
         }
 
         // Finally, call the method.
-        if (class->built_in) {
-            call_native_method(class_method, subframe);
-        } else {
-            method_execute(class_method, subframe);
-        }
+        av_call(bootstrap_list);
 
         // Now we've received a CallSite object. Link the target method handle.
-        Object *callsite = stack_pop(subframe->stack).data.object;
+        Object *callsite = bootstrap_ret.data.object;
         Object *target_method_handle = object_get_field(callsite, "target")->value.data.object;
         dynamic_method = add_dynamic_method_native(constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info),
                                                    constant_pool_resolve_field_descriptor(pool, info->dynamic_info.name_and_type_info),
                                                    object_get_field(target_method_handle, "method")->value.data.ref);
-        frame_free(subframe);
 
     execute_dynamic_method:
 
         // Now we can *finally* execute the dynamic method/field.
-        Frame *dynamic_frame = frame_new(1, dynamic_method->descriptors->arguments_count);
+        av_alist dynamic_list;
+        Variant dynamic_ret;
+        av_start_struct(dynamic_list, call_native_method, Variant, 3, &dynamic_ret);
+
+        av_ptr(dynamic_list, Method *, dynamic_method);
+
+        Variant args[dynamic_method->descriptors->arguments_count];
         for (int j = dynamic_method->descriptors->arguments_count - 1; j >= 0; j--) {
-            dynamic_frame->locals[j] = stack_pop(frame->stack);
+            args[j] = stack_pop(frame->stack);
         }
-        call_native_method(dynamic_method, dynamic_frame);
-        stack_push(frame->stack, stack_pop(dynamic_frame->stack));
-        frame_free(dynamic_frame);
+
+        for (int j = 0; j < dynamic_method->descriptors->arguments_count; j++) {
+            av_struct(dynamic_list, Variant, args[j]);
+        }
+
+        av_call(dynamic_list);
+
+        if (dynamic_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID)
+            stack_push(frame->stack, dynamic_ret);
 
         DISPATCH();
     }
@@ -929,6 +1553,8 @@ void method_execute(Method *method, Frame *frame)
     newarray: {
         uint8_t type = data[++frame->pc];
         uint32_t count = stack_pop(frame->stack).data.int_val;
+
+        printf("Creating new array of type 0x%x and count %u\n", type, count);
 
         void *arr = NULL;
         switch (type) {
@@ -964,7 +1590,7 @@ void method_execute(Method *method, Frame *frame)
     anewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(pool, index);
-        printf("Creating new array of class %s\n", class->name);
+        //printf("Creating new array of class %s at pc %d in method %s in class %s\n", class->name, frame->pc, method->name, method->class->name);
 
         int count = stack_pop(frame->stack).data.int_val;
         Array *array = array_new(class, count);
@@ -980,8 +1606,83 @@ void method_execute(Method *method, Frame *frame)
         DISPATCH();
     }
 
+    athrow: {
+        printf("Executing an athrow instruction at pc %d in method %s in class %s\n", frame->pc, method->name, method->class->name);
+        Object *exception = stack_pop(frame->stack).data.object;
+        if (!exception || !class_is_subclass(exception->class, classes_get_class("java/lang/Throwable"))) {
+            fprintf(stderr, "Attempted to throw a non-Throwable object of class %s\n", exception->class->name);
+            exit(1);
+        }
+
+        throw_exception(exception);
+
+        // Now it's possible that the frame we think is ours was freed in pursuit of an exception handler, so we'll use the global current
+        // frame to execute now
+        frame = s_current_frame;
+        method = frame->method;
+        data = method->data;
+        DISPATCH();
+    }
+
+    checkcast: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        Object *object = frame->stack->items[frame->stack->top - 1].data.object; 
+
+        if (object && object->initialized)
+        {
+            Class *cast_class = classes_get_class_from_index(pool, index);
+            if (object->class != cast_class && !class_is_subclass(object->class, cast_class))
+            {
+                fprintf(stderr, "checkcast failed: object of class %s cannot be cast to %s\n", object->class->name, cast_class->name);
+                exit(1);
+            }
+        }
+
+        // Object can be cast, continue
+        DISPATCH();
+    }
+
+    instanceof: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        Object *object = stack_pop(frame->stack).data.object;
+
+        if (object && object->initialized)
+        {
+            Class *instanceof_class = classes_get_class_from_index(pool, index);
+            int result = !!(object->class == instanceof_class || class_is_subclass(object->class, instanceof_class));
+            stack_push_int(frame->stack, result);
+        } else {
+            stack_push_int(frame->stack, 0);
+        }
+
+        DISPATCH();
+    }
+
+    // TODO
+    monitorenter:
+        stack_pop(frame->stack);
+        DISPATCH();
+
+    monitorexit:
+        stack_pop(frame->stack);
+        DISPATCH();
+
     multianewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];        
+    }
+
+    ifnull: {
+        int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
+        Variant value = stack_pop(frame->stack);
+
+        // HACK: Uninitialized fields do not have any type, fix them eventually
+        //if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT) {
+            if (value.data.ref == NULL) {
+                frame->pc += branch_offset - 3;
+            }
+        //}
+
+        DISPATCH();
     }
 
     ifnonnull: {
@@ -989,7 +1690,7 @@ void method_execute(Method *method, Frame *frame)
         Variant value = stack_pop(frame->stack);
 
         // TODO: Fix our assumption of what a Java reference is
-        if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT) {
+        if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT || value.type == 0) {
             if (value.data.ref != NULL) {
                 frame->pc += branch_offset - 3;
             }
@@ -1023,8 +1724,6 @@ Class *class_parse_file(char *filename)
     class->built_in = false;
     Reader *reader = class->reader = reader_new(class->data, filestat.st_size);
 
-    printf("class processing started!\n");
-
     /* Start parsing the classfile */
     uint32_t magic = reader_read_uint32_be(reader);
     if (magic != 0xCAFEBABE) {
@@ -1041,8 +1740,6 @@ Class *class_parse_file(char *filename)
     class->name = constant_pool_resolve_string(class->pool, reader_read_uint16_be(reader));
     /* TODO: Handle parents later */
     class->parent = classes_get_class(constant_pool_resolve_string(class->pool, reader_read_uint16_be(reader)));
-
-    printf("some basic information...\n");
 
     uint16_t interfaces_count = reader_read_uint16_be(reader);
     if (interfaces_count)
@@ -1064,9 +1761,6 @@ Class *class_parse_file(char *filename)
     class->attributes = attributes_new(reader, class->pool);
     class->static_initialized = false;
 
-    printf("fields and methods...\n");
-
-    printf("...and done!\n");
     return class;
 }
 
@@ -1076,14 +1770,11 @@ void class_initialize_static(Class *class)
 
     if ((static_init = class_get_method(class, "<clinit>", "()V"))) {
         class->static_initialized = true;
-        Frame *frame = frame_new(static_init->max_stack, static_init->max_local);
 
         if (class->built_in)
-            call_native_method(static_init, frame);
+            call_native_method(static_init);
         else
-            method_execute(static_init, frame);
-
-        frame_free(frame);
+            method_execute(static_init);
     }
 }
 
@@ -1126,18 +1817,21 @@ Class *class_create_builtin(char *name, builtins *class_builtins)
 
 Method *class_get_method(Class *class, const char *name, const char *descriptor)
 {
-    for (int i = 0; i < class->methods_count; i++) {
-        Method *method = &class->methods[i];
-        if (!strcmp(method->name, name) && !strcmp(method->descriptors->descriptor, descriptor))
-        {
-            if ((method->info.access_flags & ACC_NATIVE) && !method->native_method)
+    while (class) {
+        for (int i = 0; i < class->methods_count; i++) {
+            Method *method = &class->methods[i];
+            if (!strcmp(method->name, name) && !strcmp(method->descriptors->descriptor, descriptor))
             {
-                method->native_method = jni_resolve_method(get_jni(), class->name, method->name);
-                method->max_stack = !!(method->descriptors->return_descriptor.type != DESCRIPTOR_VOID);
-                method->max_local = method->descriptors->arguments_count + !!(method->info.access_flags & ACC_STATIC);
+                if ((method->info.access_flags & ACC_NATIVE) && !method->native_method)
+                {
+                    method->native_method = jni_resolve_method(get_jni(), class->name, method->name, method->descriptors);
+                    method->max_stack = !!(method->descriptors->return_descriptor.type != DESCRIPTOR_VOID);
+                    method->max_local = method->descriptors->arguments_count + !!(method->info.access_flags & ACC_STATIC);
+                }
+                return method;
             }
-            return method;
         }
+        class = class->parent;
     }
 
     return NULL;
@@ -1166,6 +1860,17 @@ Method *class_get_method_from_index(Class *class, uint16_t index)
     return class_get_method(class, name, descriptor);
 }
 
+bool class_is_subclass(Class *child, Class *parent)
+{
+    Class *current = child;
+    while (current) {
+        if (current == parent)
+            return true;
+        current = current->parent;
+    }
+    return false;
+}
+
 bool classes_add_class(Class *class)
 {
     if (!s_classes || !class)
@@ -1176,6 +1881,25 @@ bool classes_add_class(Class *class)
     s_classes->classes[s_classes->count++] = class;
 
     return true;
+}
+
+static Class *resolve_unknown_class(const char *name)
+{
+    char class_path[2048];
+    snprintf(class_path, sizeof(class_path), "%s.class", name);
+    printf("Trying to load class from path %s\n", class_path);
+    Class *class = class_parse_file(class_path);
+    if (class) {
+        if (!classes_add_class(class)) {
+            fprintf(stderr, "Failed to resolve class %s\n", name);
+            return NULL;
+        }
+    } else {
+        fprintf(stderr, "Failed to resolve class %s\n", name);
+        return NULL;
+    }
+
+    return class;
 }
 
 Class *classes_get_class(const char *name)
@@ -1189,7 +1913,10 @@ Class *classes_get_class(const char *name)
             return class;
     }
 
-    return NULL;
+    // Try resolving too
+    Class *class = resolve_unknown_class(name);
+
+    return class;
 }
 
 /* TODO: Fix this method */
@@ -1200,21 +1927,7 @@ Class *classes_get_class_from_index(ConstantPool *pool, uint16_t index)
 
     if (!class)
     {
-        // Let's try resolving it.
-        printf("Class %s not found, trying to resolve it now...\n", name);
-        char class_path[2048];
-        snprintf(class_path, sizeof(class_path), "%s.class", name);
-        printf("Trying to load class from path %s\n", class_path);
-        class = class_parse_file(class_path);
-        if (class) {
-            if (!classes_add_class(class)) {
-                fprintf(stderr, "Failed to resolve class %s\n", name);
-                return NULL;
-            }
-        } else {
-            fprintf(stderr, "Failed to resolve class %s\n", name);
-            return NULL;
-        }
+        class = resolve_unknown_class(name);
     }
 
     return class;

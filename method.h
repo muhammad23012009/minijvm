@@ -36,6 +36,7 @@ typedef struct ConstantPool ConstantPool;
 typedef struct Variant Variant;
 typedef struct Method Method;
 typedef struct Fields Fields;
+typedef struct Field Field;
 typedef struct builtins builtins;
  
 /* Method execution */
@@ -46,7 +47,9 @@ typedef struct builtins builtins;
  */
 
 typedef struct Frame {
-    int pc;
+    struct Frame *caller;
+    struct Method *method;
+    volatile int pc;
     int max_stack;
     int max_locals;
     Stack *stack;
@@ -54,6 +57,7 @@ typedef struct Frame {
     uint8_t *code;
 } Frame;
 
+extern Frame *get_current_frame();
 extern Frame *frame_new(int max_stack, int max_local);
 extern void frame_free(Frame *frame);
 
@@ -105,6 +109,7 @@ extern void class_free(Class *class);
 extern Method *class_get_method(Class *class, const char *name, const char *descriptor);
 extern Method *class_get_method_from_index(Class *class, uint16_t index);
 extern Field *class_get_static_field(Class *class, const char *name);
+extern bool class_is_subclass(Class *child, Class *parent);
 
 extern bool classes_add_class(Class *class);
 extern Class *classes_get_class(const char *name);
@@ -115,7 +120,7 @@ extern Method *classes_get_main_method();
 extern void classes_new();
 extern void classes_free();
 
-extern void call_native_method(Method *method, Frame *frame);
-extern void method_execute(Method *method, Frame *frame);
+extern Variant call_native_method(Method *method, ...);
+extern Variant method_execute(Method *method, ...);
 
 #endif

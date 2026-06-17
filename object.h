@@ -24,11 +24,15 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include "reader.h"
+#include "descriptor.h"
+#include "variant.h"
+#include "fields.h"
 #include "method.h"
 
 typedef struct Class Class;
 typedef struct Field Field;
-typedef struct Variant Variant;
 
 typedef struct Object {
     Class *class;
@@ -37,7 +41,7 @@ typedef struct Object {
     bool initialized;
 
     uint16_t fields_count;
-    Field *fields;
+    struct Field fields[0]; // Flexible array member
 } Object;
 
 extern Field *object_get_field(Object *object, const char *field_name);

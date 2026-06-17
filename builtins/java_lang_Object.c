@@ -26,13 +26,35 @@ Object *java_lang_Object_getClass(Object *this)
     return cobj;
 }
 
+int java_lang_Object_hashCode(Object *this)
+{
+    return (int)(uintptr_t)this;
+}
+
 void java_lang_Object_init(Object *this)
 {
     this->initialized = true;
 }
 
+bool java_lang_Object_equals(Object *this, Object *other)
+{
+    return this == other;
+}
+
+Object *java_lang_Object_toString(Object *this)
+{
+    char *str;
+    asprintf(&str, "%s@%p", this->class->name, (void*) this);
+    Object *str_obj = object_new(classes_get_class("java/lang/String"));
+    object_set_field(str_obj, "value", variant_make_owned_ref(str));
+    return str_obj;
+}
+
 static builtin_methods methods[] = {
     { "getClass", "()Ljava/lang/Class;", 0, &java_lang_Object_getClass },
+    { "hashCode", "()I", 0, &java_lang_Object_hashCode },
+    { "equals", "(Ljava/lang/Object;)Z", 0, &java_lang_Object_equals },
+    { "toString", "()Ljava/lang/String;", 0, &java_lang_Object_toString },
     { "<init>", "()V", 0, &java_lang_Object_init },
 };
 

@@ -23,6 +23,7 @@
 #include "../method.h"
 #include "../variant.h"
 #include "../array.h"
+#include "../dynarr.h"
 
 /* TODO: 
  * Add proper support for fields
@@ -78,7 +79,17 @@ extern builtins java_lang_invoke_MethodType_builtins;
 
 extern Object *java_lang_invoke_CallSite_create(jit_function_t target);
 extern Object *java_lang_invoke_MethodHandle_create(jit_function_t method);
+extern Object *java_lang_reflect_Field_init_custom(Object *name, Object *declaring_class);
 
 extern builtins java_lang_String_builtins;
 extern builtins java_lang_Class_builtins;
+extern builtins java_lang_reflect_Field_builtins;
+
+extern builtins java_io_InputStream_builtins;
+extern builtins java_io_StdinInputStream_builtins;
+extern builtins sun_misc_Unsafe_builtins;
+
+extern builtins java_lang_Throwable_builtins;
+extern builtins java_lang_ArrayIndexOutOfBoundsException_builtins;
+
 #endif
