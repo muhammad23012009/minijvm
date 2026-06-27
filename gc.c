@@ -124,11 +124,6 @@ static void mark_object_in_frame(struct list_head *obj_node, struct list_head **
 static void free_unmarked_object(struct list_head *obj_node, struct list_head **head, void *user)
 {
     Object *object = (Object *)obj_node->value;
-    // TODO: get rid of this parent_field bullshit
-    if (object->parent_field && object->parent_field->info.access_flags & 0x0008) {
-        return;
-    }
-
     //printf("Freeing unmarked object of class %s with pointer %p\n", object->class->name, (void*)object);
     steal_list_node(head, obj_node);
     object_free(object);

@@ -66,7 +66,7 @@ static char* create_format_string(const char* recipe, const char* descriptor)
     return format_str;
 }
 
-Object* java_lang_invoke_StringConcatFactory_makeConcatWithConstants(Object *lookup, Object *name, Object *type, Object* recipe, Array *args)
+Object* java_lang_invoke_StringConcatFactory_makeConcatWithConstants(Object *lookup, Object *name, Object *type, Object* recipe, Object **args)
 {
     // Generate a format string for using with JIT later.
     char* start;
@@ -81,7 +81,7 @@ Object* java_lang_invoke_StringConcatFactory_makeConcatWithConstants(Object *loo
     }
 
     // For some reason, libJIT docs do not tell you that signatures are allocated on the heap.
-    jit_type_t *signatures = arr_init(jit_type_t);
+    jit_type_t *signatures = arr_init(sizeof(jit_type_t));
     jit_type_t signature;
     // Now generate the JIT method for concatenating the strings.
     jit_context_build_start(get_jit_context());

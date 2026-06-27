@@ -15,6 +15,10 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _GNU_SOURCE
+
+#include <time.h>
+
 #include "builtins.h"
 #include "../method.h"
 
@@ -46,8 +50,44 @@ Object *java_lang_Object_toString(Object *this)
     char *str;
     asprintf(&str, "%s@%p", this->class->name, (void*) this);
     Object *str_obj = object_new(classes_get_class("java/lang/String"));
+    str_obj->initialized = true;
     object_set_field(str_obj, "value", variant_make_owned_ref(str));
     return str_obj;
+}
+
+void java_lang_Object_wait(Object *this, long timeout)
+{
+    if (!timeout) {
+        pthread_cond_wait(&this->cond, &this->lock);
+    } else {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += timeout / 1000;
+        ts.tv_nsec += (timeout % 1000) * 1000000;
+        pthread_cond_timedwait(&this->cond, &this->lock, &ts);
+    }
+}
+
+void java_lang_Object_notify(Object *this)
+{
+    pthread_mutex_lock(&this->lock);
+
+    {
+        pthread_cond_signal(&this->cond);
+    }
+
+    pthread_mutex_unlock(&this->lock);
+}
+
+void java_lang_Object_notifyAll(Object *this)
+{
+    pthread_mutex_lock(&this->lock);
+
+    {
+        pthread_cond_broadcast(&this->cond);
+    }
+
+    pthread_mutex_unlock(&this->lock);
 }
 
 static builtin_methods methods[] = {
@@ -55,6 +95,9 @@ static builtin_methods methods[] = {
     { "hashCode", "()I", 0, &java_lang_Object_hashCode },
     { "equals", "(Ljava/lang/Object;)Z", 0, &java_lang_Object_equals },
     { "toString", "()Ljava/lang/String;", 0, &java_lang_Object_toString },
+    { "wait", "(J)V", 0, &java_lang_Object_wait },
+    { "notify", "()V", 0, &java_lang_Object_notify },
+    { "notifyAll", "()V", 0, &java_lang_Object_notifyAll },
     { "<init>", "()V", 0, &java_lang_Object_init },
 };
 

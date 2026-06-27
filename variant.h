@@ -103,4 +103,23 @@ static inline void variant_release(Variant *variant)
     }
 }
 
+static inline Variant variant_default_value(const char *descriptor)
+{
+    switch (descriptor[0]) {
+        case 'I':
+            return variant_make_int(0);
+        case 'J':
+            return variant_make_long(0);
+        case 'F':
+            return variant_make_float(0.0f);
+        case 'D':
+            return variant_make_double(0.0);
+        case 'L':
+        case '[':
+            return variant_make_object(NULL);
+        default:
+            return (Variant){ .type = VARIANT_TYPE_NONE, .refcnt = 0 };
+    }
+}
+
 #endif

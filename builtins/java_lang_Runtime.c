@@ -17,6 +17,17 @@ void java_lang_Runtime_loadLibrary(Object *this, Object *name)
     free(lib_name);
 }
 
+void java_lang_Runtime_loadLibrary0(Object *this, Object *class, Object *name)
+{
+    // Very crude resolution, but it works.
+    const char format[] = "lib%s.so";
+    char *lib_name;
+
+    asprintf(&lib_name, format, object_get_field(name, "value")->value.data.ref);
+    jni_load(get_jni(), lib_name);
+    free(lib_name);
+}
+
 void java_lang_Runtime_clinit(Class *class)
 {
     Object *instance = object_new(class);
@@ -35,6 +46,9 @@ static builtin_methods methods[] = {
     },
     {
         "loadLibrary", "(Ljava/lang/String;)V", 0x0000, &java_lang_Runtime_loadLibrary
+    },
+    {
+        "loadLibrary0", "(Ljava/lang/Class;Ljava/lang/String;)V", 0x0000, &java_lang_Runtime_loadLibrary0
     },
     {
         "<clinit>", "()V", 0x0008, &java_lang_Runtime_clinit

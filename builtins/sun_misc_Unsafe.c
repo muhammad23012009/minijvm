@@ -41,13 +41,42 @@ long sun_misc_Unsafe_objectFieldOffset(Object *this, Object *reflect_field)
 
 int sun_misc_Unsafe_getAndAddInt(Object *this, Object *target, long offset, int value)
 {
-    return 0;
+    Field *field = (Field *)((char *)target + offset);
+    int old_value = field->value.data.int_val;
+    field->value.data.int_val += value;
+    return old_value;
+}
+
+long sun_misc_Unsafe_allocateMemory(Object *this, long size)
+{
+    void *ptr = malloc(size);
+    return (long)ptr;
+}
+
+void sun_misc_Unsafe_freeMemory(Object *this, long address)
+{
+    free((void *)address);
+}
+
+char sun_misc_Unsafe_getByte(Object *this, long address)
+{
+    return *(char *)address;
+}
+
+void sun_misc_Unsafe_putLong(Object *this, long address, long value)
+{
+    *(long *)address = value;
 }
 
 static builtin_methods methods[] = {
     { "getUnsafe", "()Lsun/misc/Unsafe;", ACC_STATIC, &sun_misc_Unsafe_getUnsafe },
     { "objectFieldOffset", "(Ljava/lang/reflect/Field;)J", 0, &sun_misc_Unsafe_objectFieldOffset },
     { "getAndAddInt", "(Ljava/lang/Object;JI)I", 0, &sun_misc_Unsafe_getAndAddInt },
+
+    { "allocateMemory", "(J)J", 0, &sun_misc_Unsafe_allocateMemory },
+    { "freeMemory", "(J)V", 0, &sun_misc_Unsafe_freeMemory },
+    { "getByte", "(J)B", 0, &sun_misc_Unsafe_getByte },
+    { "putLong", "(JJ)V", 0, &sun_misc_Unsafe_putLong },
     { "<clinit>", "()V", 0, &sun_misc_Unsafe_clinit },
 };
 

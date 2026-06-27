@@ -27,7 +27,7 @@ int java_io_InputStream_read_bytearray_extended(Object *this, void *bytearray, i
 
 int java_io_InputStream_read_bytearray(Object *this, void *bytearray)
 {
-    return java_io_InputStream_read_bytearray_extended(this, bytearray, 0, arr_length(bytearray));
+    return java_io_InputStream_read_bytearray_extended(this, bytearray, 0, arr_capacity(bytearray));
 }
 
 static builtin_methods methods[] = {

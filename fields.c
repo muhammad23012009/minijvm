@@ -36,6 +36,9 @@ Fields *fields_new(Class *class, Reader *reader, ConstantPool *pool)
         field->info.attributes = attributes_new(reader, pool);
 
         field->name = field->info.name;
+
+        // Default-initialize the value
+        field->value = variant_default_value(field->info.descriptor);
     }
 
     return fields;
@@ -70,6 +73,9 @@ Fields *fields_new_builtin(Class *class, builtins *class_builtins)
         field->info.attributes = NULL;
 
         field->name = bf->name;
+
+        // Default-initialize the value
+        field->value = variant_default_value(field->info.descriptor);
     }
 
     return fields;

@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include "../method.h"
 #include "../variant.h"
-#include "../array.h"
 #include "../dynarr.h"
 
 /* TODO: 
@@ -79,7 +78,10 @@ extern builtins java_lang_invoke_MethodType_builtins;
 
 extern Object *java_lang_invoke_CallSite_create(jit_function_t target);
 extern Object *java_lang_invoke_MethodHandle_create(jit_function_t method);
-extern Object *java_lang_reflect_Field_init_custom(Object *name, Object *declaring_class);
+extern Object *java_lang_reflect_Field_init_custom(Object *name, Object *declaring_class, Object *clazz);
+extern void java_lang_Object_notifyAll(Object *this);
+extern Object *getClassObject(Class *class);
+extern Object *java_lang_String_new(const char *str);
 
 extern builtins java_lang_String_builtins;
 extern builtins java_lang_Class_builtins;
@@ -91,5 +93,7 @@ extern builtins sun_misc_Unsafe_builtins;
 
 extern builtins java_lang_Throwable_builtins;
 extern builtins java_lang_ArrayIndexOutOfBoundsException_builtins;
+
+extern builtins java_lang_Runtime_builtins;
 
 #endif

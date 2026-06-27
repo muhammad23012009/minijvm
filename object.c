@@ -15,10 +15,13 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _GNU_SOURCE
+
 #include <stdarg.h>
 #include "object.h"
 #include "gc.h"
 #include "dynarr.h"
+#include <pthread.h>
 
 /* TODO:
  * Add fields for objects 
@@ -50,7 +53,7 @@ void object_set_field(Object *object, const char *field_name, Variant value)
 
 Object *object_new(Class *class)
 {
-    Field *fields = arr_init(Field);
+    Field *fields = arr_init(sizeof(Field));
     Class *object_class = class;
     Object *ret;
     int fields_count = 0;
@@ -72,6 +75,14 @@ Object *object_new(Class *class)
     memset(ret, 0, sizeof(Object) + sizeof(Field) * fields_count);
     ret->class = object_class;
     ret->fields_count = fields_count;
+
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&ret->lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+    pthread_cond_init(&ret->cond, NULL);
+
     if (ret->fields_count) {
         memcpy(ret->fields, fields, sizeof(Field) * fields_count);
         arr_free(fields);
@@ -87,6 +98,8 @@ void object_free(Object *object)
         variant_release(&object->fields[i].value);
     }
 
+    pthread_cond_destroy(&object->cond);
+    pthread_mutex_destroy(&object->lock);
     // The class will actually free the relevant fields, we just need to free the copy we took.
     free(object);
 }

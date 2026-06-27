@@ -35,10 +35,11 @@ typedef struct Class Class;
 typedef struct Field Field;
 
 typedef struct Object {
+    void *array; // Very hacky, only for reflection APIs to return an object representing an array
     Class *class;
-    // The field which contains this object, will be set once we get to putfield or putstatic
-    Field* parent_field;
     bool initialized;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
 
     uint16_t fields_count;
     struct Field fields[0]; // Flexible array member

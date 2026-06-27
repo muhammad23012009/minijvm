@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include <jit/jit.h>
+#include <pthread.h>
 
 #include "attribute.h"
 #include "constantpool.h"
@@ -27,7 +28,13 @@
 #include "object.h"
 #include "jni.h"
 
+struct arguments {
+    Method *method;
+    Variant arg;
+};
+
 extern jit_context_t get_jit_context();
 extern JNI *get_jni();
+extern uint64_t get_current_time();
 
 #endif

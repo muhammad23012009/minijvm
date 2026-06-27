@@ -20,6 +20,7 @@ jint JNI_GetVersion(JNIEnv *env)
 jstring JNI_NewStringUTF(JNIEnv *env, const char *utf)
 {
     Object *string = object_new(classes_get_class("java/lang/String"));
+    string->initialized = true;
     object_set_field(string, "value", variant_make_ref(utf));
     return string;
 }
@@ -27,7 +28,7 @@ jstring JNI_NewStringUTF(JNIEnv *env, const char *utf)
 JNI *jni_init()
 {
     JNI *jni = malloc(sizeof(JNI));
-    jni->loaded_libs = arr_init(void*);
+    jni->loaded_libs = arr_init(sizeof(void*));
     jni->env = malloc(sizeof(JNINativeInterface));
     jni->vm = malloc(sizeof(JNIInvokeInterface));
     jni->env->jni = jni->vm->jni = jni;

@@ -29,8 +29,14 @@ Object *java_util_Objects_requireNonNull(Object *object)
     return object;
 }
 
+bool java_util_Objects_equals(Object *a, Object *b)
+{
+    return a == b;
+}
+
 static builtin_methods methods[] = {
-    { "requireNonNull", "(Ljava/lang/Object;)Ljava/lang/Object", 0x0008, &java_util_Objects_requireNonNull },
+    { "requireNonNull", "(Ljava/lang/Object;)Ljava/lang/Object;", 0x0008, &java_util_Objects_requireNonNull },
+    { "equals", "(Ljava/lang/Object;Ljava/lang/Object;)Z", 0x0008, &java_util_Objects_equals },
 };
 
 builtins java_util_Objects_builtins = {

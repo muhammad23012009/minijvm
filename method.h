@@ -30,6 +30,7 @@
 #include "stack.h"
 #include "descriptor.h"
 #include "fields.h"
+#include "map.h"
 
 typedef struct Attributes Attributes;
 typedef struct ConstantPool ConstantPool;
@@ -76,6 +77,10 @@ typedef struct Class {
     const char *name;
     struct Class *parent;
     bool built_in;
+    bool is_primitive;
+    bool is_array;
+    Class *component_type;
+    int dimension_count;
 
     /* Each class has its own constant pool, except built-ins */
     ConstantPool *pool;
@@ -97,7 +102,7 @@ typedef struct Class {
 
 typedef struct Classes {
     uint16_t count;
-    Class **classes;
+    map_void_t classes;
     Class *main_class;
 } Classes;
 
@@ -108,8 +113,10 @@ extern void class_free(Class *class);
 
 extern Method *class_get_method(Class *class, const char *name, const char *descriptor);
 extern Method *class_get_method_from_index(Class *class, uint16_t index);
+extern Field *class_get_field(Class *class, const char *name);
 extern Field *class_get_static_field(Class *class, const char *name);
 extern bool class_is_subclass(Class *child, Class *parent);
+extern bool class_implements_interface(Class *class, Class *interface);
 
 extern bool classes_add_class(Class *class);
 extern Class *classes_get_class(const char *name);

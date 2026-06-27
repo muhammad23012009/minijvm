@@ -19,7 +19,6 @@
 #include <avcall.h>
 
 #include "builtins/builtins.h"
-#include "array.h"
 #include "method.h"
 #include "object.h"
 #include "gc.h"
@@ -67,14 +66,14 @@ Frame *frame_new(int max_stack, int max_local)
     frame->stack = stack_new(max_stack);
     frame->locals = calloc(max_local, sizeof(Variant));
 
-    gc_track_frame(frame);
+    //gc_track_frame(frame);
 
     return frame;
 }
 
 void frame_free(Frame *frame)
 {
-    gc_untrack_frame(frame);
+    //gc_untrack_frame(frame);
 
     // Go back to the old frame
     s_current_frame = frame->caller;
@@ -106,7 +105,7 @@ Method *add_dynamic_method_native(const char* name, const char* descriptor, jit_
 
     if (!s_dynamic_methods)
     {
-        s_dynamic_methods = arr_init(Method*);
+        s_dynamic_methods = arr_init(sizeof(Method*));
     }
 
     arr_push(s_dynamic_methods, method);
@@ -167,9 +166,7 @@ static Variant resolve_bootstrap_argument(ConstantPool *pool, uint16_t index)
         case CONSTANT_CLASS:
         {
             Class *resolved_class = classes_get_class_from_index(pool, index);
-            Object *class_object = object_new(classes_get_class("java/lang/Class"));
-            object_get_field(class_object, "class")->value.data.class = resolved_class;
-            return variant_make_object(class_object);
+            return variant_make_object(getClassObject(resolved_class));
         }
 
         case CONSTANT_INT:
@@ -179,6 +176,7 @@ static Variant resolve_bootstrap_argument(ConstantPool *pool, uint16_t index)
         {
             Object *str_obj = object_new(classes_get_class("java/lang/String"));
             object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
+            str_obj->initialized = true;
             return variant_make_object(str_obj);
         }
 
@@ -289,6 +287,10 @@ Variant call_native_method(Method *method, ...)
             av_start_uchar(list, (unsigned char(*)())method->native_method, &return_value.data.int_val);
             return_value.type = VARIANT_TYPE_INT;
             break;
+        case DESCRIPTOR_BYTE:
+            av_start_char(list, (char(*)())method->native_method, &return_value.data.int_val);
+            return_value.type = VARIANT_TYPE_INT;
+            break;
         case DESCRIPTOR_FLOAT:
             av_start_float(list, (float(*)())method->native_method, &return_value.data.float_val);
             return_value.type = VARIANT_TYPE_FLOAT;
@@ -310,6 +312,11 @@ Variant call_native_method(Method *method, ...)
             class_initialize_static(method->class);
         }
         av_ptr(list, JNIEnv *, &get_jni()->env);
+
+        if (method->info.access_flags & ACC_STATIC)
+        {
+            av_ptr(list, Class *, method->class);
+        }
     }
 
     /* If the function isn't static, push the "this" pointer */
@@ -321,7 +328,7 @@ Variant call_native_method(Method *method, ...)
     FOREACH_DESCRIPTOR(method->descriptors, descriptor) {
         // If the current argument is an array, just pass the Array pointer
         if (descriptor.array_dimesions_count > 0) {
-            av_ptr(list, Array *, args[j].data.ref);
+            av_ptr(list, void *, args[j].data.ref);
             j++;
             continue;
         }
@@ -341,6 +348,9 @@ Variant call_native_method(Method *method, ...)
                 break;
             case DESCRIPTOR_BOOL:
                 av_uchar(list, args[j].data.int_val);
+                break;
+            case DESCRIPTOR_BYTE:
+                av_char(list, args[j].data.int_val);
                 break;
             case DESCRIPTOR_FLOAT:
                 av_float(list, args[j].data.float_val);
@@ -391,7 +401,7 @@ Variant method_execute(Method *method, ...)
     frame->method = method;
     s_current_frame = frame;
 
-    printf("Beginning execution of method %s in class %s in frame %p\n", method->name, method->class->name, (void*)frame);
+    //printf("Beginning execution of method %s in class %s in frame %p\n", method->name, method->class->name, (void*)frame);
     const static void *opcodes[] = {
         [1] = &&aconst_null,
         [2] = &&iconst_m1,
@@ -419,26 +429,35 @@ Variant method_execute(Method *method, ...)
         [24] = &&dload,
         [25] = &&aload,
         [26 ... 29] = &&iload_x,
+        [30 ... 33] = &&lload_x,
         [34 ... 37] = &&fload_x,
         [42 ... 45] = &&aload_x,
         [46] = &&iaload,
         [50] = &&aaload,
+        [51] = &&baload,
+        [52] = &&caload,
         [54] = &&istore,
+        [55] = &&lstore,
         [58] = &&astore,
         [59 ... 62] = &&istore_x,
+        [63 ... 66] = &&lstore_x,
         [75 ... 78] = &&astore_x,
         [79] = &&iastore,
         [83] = &&aastore,
+        [84] = &&bastore,
         [85] = &&castore,
         [87] = &&pop,
         [89] = &&dup,
         [90] = &&dup_x1,
+        [92] = &&dup2,
         [96] = &&iadd,
         [97] = &&ladd,
         [100] = &&isub,
         [104] = &&imul,
         [106] = &&fmul,
         [108] = &&idiv,
+        [112] = &&irem,
+        [116] = &&ineg,
         [120] = &&ishl,
         [121] = &&lshl,
         [122] = &&ishr,
@@ -452,7 +471,9 @@ Variant method_execute(Method *method, ...)
         [133] = &&i2l,
         [134] = &&i2f,
         [139] = &&f2i,
+        [145] = &&i2b,
         [146] = &&i2c,
+        [148] = &&lcmp,
         [149 ... 150] = &&fcmp_x,
         [153] = &&ifeq,
         [154] = &&ifne,
@@ -464,6 +485,7 @@ Variant method_execute(Method *method, ...)
         [165] = &&if_acmpeq,
         [166] = &&if_acmpne,
         [167] = &&j_goto,
+        [171] = &&lookupswitch,
         [172] = &&ireturn,
         [173] = &&lreturn,
         [174] = &&freturn,
@@ -579,10 +601,7 @@ Variant method_execute(Method *method, ...)
         switch (tag) {
             case CONSTANT_CLASS: {
                 Class *class = classes_get_class_from_index(pool, index);
-                Object *class_object = object_new(classes_get_class("java/lang/Class"));
-                object_get_field(class_object, "class")->value.data.class = class;
-                variant.type = VARIANT_TYPE_OBJECT;
-                variant.data.object = class_object;
+                variant = variant_make_object(getClassObject(class));
                 break;
             }
 
@@ -604,6 +623,7 @@ Variant method_execute(Method *method, ...)
                 object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
                 variant.data.object = str_obj;
                 variant.type = VARIANT_TYPE_OBJECT;
+                str_obj->initialized = true;
                 break;
             }
 
@@ -630,10 +650,7 @@ Variant method_execute(Method *method, ...)
         switch (tag) {
             case CONSTANT_CLASS: {
                 Class *class = classes_get_class_from_index(pool, index);
-                Object *class_object = object_new(classes_get_class("java/lang/Class"));
-                object_get_field(class_object, "class")->value.data.class = class;
-                variant.type = VARIANT_TYPE_OBJECT;
-                variant.data.object = class_object;
+                variant = variant_make_object(getClassObject(class));
                 break;
             }
 
@@ -655,6 +672,7 @@ Variant method_execute(Method *method, ...)
                 object_set_field(str_obj, "value", variant_make_ref(constant_pool_resolve_string(pool, index)));
                 variant.data.object = str_obj;
                 variant.type = VARIANT_TYPE_OBJECT;
+                str_obj->initialized = true;
                 break;
             }
 
@@ -741,6 +759,13 @@ Variant method_execute(Method *method, ...)
         DISPATCH();
     }
 
+    lload_x: {
+        uint8_t local_index = op - 30;
+        Variant item = frame->locals[local_index];
+        stack_push(frame->stack, item);
+        DISPATCH();
+    }
+
     fload_x: {
         uint8_t local_index = op - 34;
         Variant item = frame->locals[local_index];
@@ -756,13 +781,19 @@ Variant method_execute(Method *method, ...)
 
     iaload: {
         int index = stack_pop(frame->stack).data.int_val;
-        int* array = stack_pop(frame->stack).data.ref;
+        Variant array_variant = stack_pop(frame->stack);
+        int* array = NULL;
+        if (array_variant.type == VARIANT_TYPE_OBJECT && array_variant.data.object->array)
+            array = (int*)array_variant.data.object->array;
+        else
+            array = array_variant.data.ref;
 
         if (index < 0 || index >= arr_capacity(array)) {
             Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
             char *str;
             asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
             Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            str_obj->initialized = true;
             object_set_field(str_obj, "value", variant_make_owned_ref(str));
             object_set_field(exception, "message", variant_make_object(str_obj));
             throw_exception(exception);
@@ -775,13 +806,77 @@ Variant method_execute(Method *method, ...)
 
     aaload: {
         int index = stack_pop(frame->stack).data.int_val;
-        Array *array = stack_pop(frame->stack).data.ref;
+        Object **array = NULL;
+        Variant array_variant = stack_pop(frame->stack);
 
-        stack_push(frame->stack, array->value[index]);
+        if (array_variant.type == VARIANT_TYPE_OBJECT && array_variant.data.object->array)
+            array = (Object**)array_variant.data.object->array;
+        else
+            array = array_variant.data.ref;
+
+        stack_push(frame->stack, variant_make_object(array[index]));
+        DISPATCH();
+    }
+
+    baload: {
+        int index = stack_pop(frame->stack).data.int_val;
+        uint8_t* array = NULL;
+        Variant array_variant = stack_pop(frame->stack);
+
+        if (array_variant.type == VARIANT_TYPE_OBJECT && array_variant.data.object->array)
+            array = (uint8_t*)array_variant.data.object->array;
+        else
+            array = array_variant.data.ref;
+
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            str_obj->initialized = true;
+            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            stack_push_int(frame->stack, array[index]);
+        }
+
+        DISPATCH();
+    }
+
+    caload: {
+        int index = stack_pop(frame->stack).data.int_val;
+        uint16_t* array = NULL;
+        Variant array_variant = stack_pop(frame->stack);
+
+        if (array_variant.type == VARIANT_TYPE_OBJECT && array_variant.data.object->array)
+            array = (uint16_t*)array_variant.data.object->array;
+        else
+            array = array_variant.data.ref;
+
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            str_obj->initialized = true;
+            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            stack_push_int(frame->stack, array[index]);
+        }
+
         DISPATCH();
     }
 
     istore: {
+        uint8_t local_index = data[++frame->pc];
+        frame->locals[local_index] = stack_pop(frame->stack);
+        DISPATCH();
+    }
+
+    lstore: {
         uint8_t local_index = data[++frame->pc];
         frame->locals[local_index] = stack_pop(frame->stack);
         DISPATCH();
@@ -799,6 +894,12 @@ Variant method_execute(Method *method, ...)
         DISPATCH();
     }
 
+    lstore_x: {
+        uint8_t local_index = op - 63;
+        frame->locals[local_index] = stack_pop(frame->stack);
+        DISPATCH();
+    }
+
     astore_x: {
         uint8_t local_index = op - 75;
         Variant value = stack_pop(frame->stack);
@@ -809,46 +910,89 @@ Variant method_execute(Method *method, ...)
     iastore: {
         int value = stack_pop(frame->stack).data.int_val;
         int index = stack_pop(frame->stack).data.int_val;
-        int* array = stack_pop(frame->stack).data.ref;
+        Variant array_ref = stack_pop(frame->stack);
+        int* array = NULL;
+        if (array_ref.type == VARIANT_TYPE_OBJECT && array_ref.data.object->array)
+            array = array_ref.data.object->array;
+        else
+            array = array_ref.data.ref;
 
         if (index < 0 || index >= arr_capacity(array)) {
             Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
             char *str;
             asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
             Object *str_obj = object_new(classes_get_class("java/lang/String"));
+            str_obj->initialized = true;
             object_set_field(str_obj, "value", variant_make_owned_ref(str));
             object_set_field(exception, "message", variant_make_object(str_obj));
             throw_exception(exception);
         } else {
-            arr_push(array, value);
+            array[index] = value;
         }
 
         DISPATCH();
     }
+
     aastore: {
         Variant value = stack_pop(frame->stack);
         int index = stack_pop(frame->stack).data.int_val;
-        Array *array = stack_pop(frame->stack).data.ref;
+        Variant array_ref = stack_pop(frame->stack);
+        Object **array = NULL;
+        if (array_ref.type == VARIANT_TYPE_OBJECT && array_ref.data.object->array)
+            array = array_ref.data.object->array;
+        else
+            array = array_ref.data.ref;
 
-        array_set_value(array, index, value);
+        array[index] = value.data.object;
+
+        DISPATCH();
+    }
+
+    bastore: {
+        uint8_t value = stack_pop(frame->stack).data.int_val;
+        int index = stack_pop(frame->stack).data.int_val;
+        Variant array_ref = stack_pop(frame->stack);
+        uint8_t* array = NULL;
+        if (array_ref.type == VARIANT_TYPE_OBJECT && array_ref.data.object->array)
+            array = array_ref.data.object->array;
+        else
+            array = array_ref.data.ref;
+
+        if (index < 0 || index >= arr_capacity(array)) {
+            Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
+            char *str;
+            asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
+            Object *str_obj = java_lang_String_new(str);
+            free(str);
+            object_set_field(exception, "message", variant_make_object(str_obj));
+            throw_exception(exception);
+        } else {
+            array[index] = value;
+        }
+
         DISPATCH();
     }
 
     castore: {
         uint16_t value = stack_pop(frame->stack).data.int_val;
         int index = stack_pop(frame->stack).data.int_val;
-        uint16_t* array = stack_pop(frame->stack).data.ref;
+        Variant array_ref = stack_pop(frame->stack);
+        uint16_t* array = NULL;
+        if (array_ref.type == VARIANT_TYPE_OBJECT && array_ref.data.object->array)
+            array = array_ref.data.object->array;
+        else
+            array = array_ref.data.ref;
 
         if (index < 0 || index >= arr_capacity(array)) {
             Object *exception = object_new(classes_get_class("java/lang/ArrayIndexOutOfBoundsException"));
             char *str;
             asprintf(&str, "Index %d out of bounds for length %zu", index, arr_capacity(array));
-            Object *str_obj = object_new(classes_get_class("java/lang/String"));
-            object_set_field(str_obj, "value", variant_make_owned_ref(str));
+            Object *str_obj = java_lang_String_new(str);
+            free(str);
             object_set_field(exception, "message", variant_make_object(str_obj));
             throw_exception(exception);
         } else {
-            arr_push(array, value);
+            array[index] = value;
         }
 
         DISPATCH();
@@ -869,6 +1013,24 @@ Variant method_execute(Method *method, ...)
         stack_push(frame->stack, val1);
         stack_push(frame->stack, val2);
         stack_push(frame->stack, val1);
+        DISPATCH();
+    }
+
+    dup2: {
+        Variant peek = frame->stack->items[frame->stack->top - 1];
+        if (peek.type == VARIANT_TYPE_LONG || peek.type == VARIANT_TYPE_DOUBLE) {
+            // Category 2 computational type
+            Variant value = stack_pop(frame->stack);
+            stack_push(frame->stack, value);
+            stack_push(frame->stack, value);
+        } else {
+            // Category 1 computational type
+            Variant value2 = frame->stack->items[frame->stack->top - 2];
+            Variant value1 = frame->stack->items[frame->stack->top - 1];
+            stack_push(frame->stack, value2);
+            stack_push(frame->stack, value1);
+        }
+
         DISPATCH();
     }
 
@@ -906,6 +1068,17 @@ Variant method_execute(Method *method, ...)
         int d2 = stack_pop(frame->stack).data.int_val;
         int d1 = stack_pop(frame->stack).data.int_val;
         stack_push_int(frame->stack, d1 / d2);
+        DISPATCH();
+
+    irem:
+        int r2 = stack_pop(frame->stack).data.int_val;
+        int r1 = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, r1 - (r1 / r2) * r2);
+        DISPATCH();
+
+    ineg:
+        int neg = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, -neg);
         DISPATCH();
 
     ishl:
@@ -987,9 +1160,28 @@ Variant method_execute(Method *method, ...)
         DISPATCH();
     }
 
+    i2b: {
+        int value = stack_pop(frame->stack).data.int_val;
+        stack_push_int(frame->stack, (int8_t)(value & 0xFF));
+        DISPATCH();
+    }
+
     i2c: {
         int value = stack_pop(frame->stack).data.int_val;
         stack_push_int(frame->stack, (uint16_t)(value & 0xFFFF));
+        DISPATCH();
+    }
+
+    lcmp: {
+        long l2 = stack_pop(frame->stack).data.long_val;
+        long l1 = stack_pop(frame->stack).data.long_val;
+        if (l1 < l2) {
+            stack_push_int(frame->stack, -1);
+        } else if (l1 == l2) {
+            stack_push_int(frame->stack, 0);
+        } else {
+            stack_push_int(frame->stack, 1);
+        }
         DISPATCH();
     }
 
@@ -1113,6 +1305,7 @@ Variant method_execute(Method *method, ...)
         Variant value2 = stack_pop(frame->stack);
         Variant value1 = stack_pop(frame->stack);
 
+        printf("if_acmpeq: Comparing %p and %p\n", value1.data.ref, value2.data.ref);
         // TODO: Compare types
         if (value1.data.ref == value2.data.ref) {
             frame->pc += branch_offset - 3;
@@ -1137,6 +1330,41 @@ Variant method_execute(Method *method, ...)
         int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
         /* Two bytes for the branch offset, and one byte for DISPATCH */
         frame->pc += branch_offset - 3;
+        DISPATCH();
+    }
+
+    lookupswitch: {
+        int last_pc = frame->pc;
+        frame->pc++;
+        frame->pc = (frame->pc + 3) & ~3;
+        // For some reason clang optimizes ++frame->pc into a little-endian read??? so we have to manually add and then read
+        int default_offset = (data[frame->pc] << 24) | (data[frame->pc + 1] << 16) | (data[frame->pc + 2] << 8) | data[frame->pc + 3];
+        frame->pc += 4;
+        int npairs = (data[frame->pc] << 24) | (data[frame->pc + 1] << 16) | (data[frame->pc + 2] << 8) | data[frame->pc + 3];
+        frame->pc += 4;
+
+        int key = stack_pop(frame->stack).data.int_val;
+
+        uint8_t* table_base = &data[frame->pc];
+        frame->pc += npairs * 8;
+
+        int low = 0;
+        int high = npairs - 1;
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            int mid_key = (table_base[mid * 8] << 24) | (table_base[mid * 8 + 1] << 16) | (table_base[mid * 8 + 2] << 8) | table_base[mid * 8 + 3];
+            if (mid_key == key) {
+                int offset = (table_base[mid * 8 + 4] << 24) | (table_base[mid * 8 + 5] << 16) | (table_base[mid * 8 + 6] << 8) | table_base[mid * 8 + 7];
+                frame->pc = last_pc + offset - 1;
+                DISPATCH();
+            } else if (mid_key < key) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        frame->pc = last_pc + default_offset - 1;
         DISPATCH();
     }
 
@@ -1226,9 +1454,6 @@ Variant method_execute(Method *method, ...)
 
         /* TODO: Implement value conversion */
         field->value = stack_pop(frame->stack);
-        if (field->value.type == VARIANT_TYPE_OBJECT && field->value.data.object) {
-            field->value.data.object->parent_field = field;
-        }
         DISPATCH();
     }
 
@@ -1250,17 +1475,12 @@ Variant method_execute(Method *method, ...)
         const char *field_name = constant_pool_resolve_field_name(pool, index);
         object_set_field(object, field_name, value);
 
-        if (value.type == VARIANT_TYPE_OBJECT) {
-            value.data.object->parent_field = object_get_field(object, field_name);
-        }
         DISPATCH();
     }
 
-    invokevirtual:
-    invokespecial: {
+    invokevirtual: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
         Class *class = classes_get_class_from_index(pool, index);
-        // Fake method, we'll find the real one from the object we were passed
         Method *class_method = get_method(pool, class, index);
         Variant ret;
         av_alist list;
@@ -1270,46 +1490,79 @@ Variant method_execute(Method *method, ...)
             args[i] = stack_pop(frame->stack);
         }
 
-        if (class_method->info.access_flags & ACC_ABSTRACT) {
-            class = args[0].data.object->class;
-            const char* method_name = class_method->name;
-            const char* method_descriptor = class_method->descriptors->descriptor;
-            while (class) {
-                printf("Class name is %s\n", class->name);
-                printf("Class parent name is %s\n", class->parent ? class->parent->name : "NULL");
-                printf("Looking for method %s with descriptor %s in class %s\n", method_name, method_descriptor, class->name);
-                class_method = class_get_method(class, method_name, method_descriptor);
-                if (class_method) {
-                    break;
-                }
-                class = class->parent;
-            }
+        const char* method_name = class_method->name;
+        const char* method_descriptor = class_method->descriptors->descriptor;
+        Class *object_class = args[0].data.object->class;
+        class_method = class_get_method(object_class, method_name, method_descriptor);
 
-            if (class_method == NULL) {
-                fprintf(stderr, "Failed to find implementation for abstract method %s with descriptor %s\n", class_method->name, class_method->descriptors->descriptor);
-                exit(1);
-            }
+        if (class_method == NULL) {
+            fprintf(stderr, "Failed to find implementation for method %s with descriptor %s\n", method_name, method_descriptor);
+            exit(1);
         }
 
-        // This feels really ugly, I guess we can clean it up later
-        if (class->built_in)
+        if (class_method->info.access_flags & ACC_SYNCHRONIZED) {
+            pthread_mutex_lock(&args[0].data.object->lock);
+        }
+
+        if (class_method->class->built_in || class_method->info.access_flags & ACC_NATIVE)
             av_start_struct(list, call_native_method, Variant, 3, &ret);
         else
             av_start_struct(list, method_execute, Variant, 3, &ret);
 
         av_ptr(list, Method *, class_method);
 
-        // Now make the arguments in a "sane" order
         for (int i = 0; i < class_method->descriptors->arguments_count + 1; ++i) {
             av_struct(list, Variant, args[i]);
         }
 
         av_call(list);
 
-        //printf("finished execution of submethod %s\n", class_method->name);
+        if (class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID) {
+            stack_push(frame->stack, ret);
+        }
+
+        if (class_method->info.access_flags & ACC_SYNCHRONIZED) {
+            pthread_mutex_unlock(&args[0].data.object->lock);
+        }
+
+        DISPATCH();
+    }
+
+    invokespecial: {
+        uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];
+        Class *class = classes_get_class_from_index(pool, index);
+        Method *class_method = get_method(pool, class, index);
+        Variant ret;
+        av_alist list;
+        Variant args[class_method->descriptors->arguments_count + 1];
+
+        for (int i = class_method->descriptors->arguments_count; i >= 0; --i) {
+            args[i] = stack_pop(frame->stack);
+        }
+
+        if (class_method->info.access_flags & ACC_SYNCHRONIZED) {
+            pthread_mutex_lock(&args[0].data.object->lock);
+        }
+
+        if (class_method->class->built_in || class_method->info.access_flags & ACC_NATIVE)
+            av_start_struct(list, call_native_method, Variant, 3, &ret);
+        else
+            av_start_struct(list, method_execute, Variant, 3, &ret);
+
+        av_ptr(list, Method *, class_method);
+
+        for (int i = 0; i < class_method->descriptors->arguments_count + 1; ++i) {
+            av_struct(list, Variant, args[i]);
+        }
+
+        av_call(list);
 
         if (class_method->descriptors->return_descriptor.type != DESCRIPTOR_VOID)
             stack_push(frame->stack, ret);
+
+        if (class_method->info.access_flags & ACC_SYNCHRONIZED) {
+            pthread_mutex_unlock(&args[0].data.object->lock);
+        }
 
         DISPATCH();
     }
@@ -1419,8 +1672,8 @@ Variant method_execute(Method *method, ...)
                 !strcmp(dynamic_method->name, constant_pool_resolve_field_name(pool, info->dynamic_info.name_and_type_info)) &&
                 !strcmp(dynamic_method->descriptors->descriptor, constant_pool_resolve_field_descriptor(pool, info->dynamic_info.name_and_type_info))) {
                 // If we find a matching dynamic method, just execute it.
-                printf("Found existing dynamic method %s with descriptor %s for invokedynamic instruction at index %u, executing it\n",
-                       dynamic_method->name, dynamic_method->descriptors->descriptor, index);
+                //printf("Found existing dynamic method %s with descriptor %s for invokedynamic instruction at index %u, executing it\n",
+                //       dynamic_method->name, dynamic_method->descriptors->descriptor, index);
                 goto execute_dynamic_method;
             }
         }
@@ -1443,6 +1696,7 @@ Variant method_execute(Method *method, ...)
         av_alist bootstrap_list;
         Variant bootstrap_ret;
         Object *method_string = object_new(classes_get_class("java/lang/String"));
+        method_string->initialized = true;
         Object *lookup = object_new(classes_get_class("java/lang/invoke/MethodHandles$Lookup"));
 
         // Create a MethodType from the NameAndType
@@ -1482,11 +1736,12 @@ Variant method_execute(Method *method, ...)
 
             // Only the last argument can be a vaargs array.
             if (descriptor->array_dimesions_count > 0 && j == class_method->descriptors->arguments_count - 1) {
-                Array *args_array = array_new(classes_get_class("java/lang/Object"), remaining_bootstrap_arguments);
+                Object **args_array = arr_init_with_capacity_and_type(sizeof(Object*), remaining_bootstrap_arguments, ARRAY_TYPE_OBJECT, classes_get_class("java/lang/Object"));
 
                 for (uint16_t k = 0; k < remaining_bootstrap_arguments; k++) {
                     uint16_t bootstrap_argument_index = bootstrap_methods->BootstrapMethodsAttribute.bootstrap_methods[bootstrap_index].bootstrap_arguments[bootstrap_argument_cursor++];
-                    array_set_value(args_array, k, resolve_bootstrap_argument(pool, bootstrap_argument_index));
+                    // The last argument will only have objects
+                    arr_push(args_array, resolve_bootstrap_argument(pool, bootstrap_argument_index).data.object);
                 }
 
                 Variant arr = variant_make_ref(args_array);
@@ -1554,35 +1809,64 @@ Variant method_execute(Method *method, ...)
         uint8_t type = data[++frame->pc];
         uint32_t count = stack_pop(frame->stack).data.int_val;
 
-        printf("Creating new array of type 0x%x and count %u\n", type, count);
-
         void *arr = NULL;
         switch (type) {
             case 4: /* boolean */
             case 8: /* byte */
-                arr = arr_init_with_capacity(sizeof(char), count);
+                arr = arr_init_with_capacity_and_type(sizeof(char), count, ARRAY_TYPE_BYTE, NULL);
                 break;
             case 6: /* float */
-                arr = arr_init_with_capacity(sizeof(float), count);
+                arr = arr_init_with_capacity_and_type(sizeof(float), count, ARRAY_TYPE_FLOAT, NULL);
                 break;
             case 7: /* double */
-                arr = arr_init_with_capacity(sizeof(double), count);
+                arr = arr_init_with_capacity_and_type(sizeof(double), count, ARRAY_TYPE_DOUBLE, NULL);
                 break;
             case 5: /* char */
-                arr = arr_init_with_capacity(sizeof(short), count);
+                arr = arr_init_with_capacity_and_type(sizeof(short), count, ARRAY_TYPE_CHAR, NULL);
                 break;
             case 10: /* int */
-                arr = arr_init_with_capacity(sizeof(int), count);
+                arr = arr_init_with_capacity_and_type(sizeof(int), count, ARRAY_TYPE_INT, NULL);
                 break;
             case 11: /* long */
-                arr = arr_init_with_capacity(sizeof(long), count);
+                arr = arr_init_with_capacity_and_type(sizeof(long), count, ARRAY_TYPE_LONG, NULL);
                 break;
             default:
                 fprintf(stderr, "Unsupported array type 0x%x in newarray instruction\n", type);
                 exit(1);
         }
 
-        stack_push_ref(frame->stack, arr);
+        char desc;
+        switch (type) {
+            case 4: /* boolean */
+            case 8: /* byte */
+                desc = 'B';
+                break;
+            case 6: /* float */
+                desc = 'F';
+                break;
+            case 7: /* double */
+                desc = 'D';
+                break;
+            case 5: /* char */
+                desc = 'C';
+                break;
+            case 10: /* int */
+                desc = 'I';
+                break;
+            case 11: /* long */
+                desc = 'J';
+                break;
+        }
+        // FUCK THIS GENUINELY
+        char *fuckfuckfuck;
+        asprintf(&fuckfuckfuck, "[%c", desc);
+        Class *arr_class = classes_get_class(fuckfuckfuck);
+        free(fuckfuckfuck);
+
+        Object *thefuckingobject = object_new(arr_class);
+        thefuckingobject->array = arr;
+
+        stack_push_object(frame->stack, thefuckingobject);
 
         DISPATCH();
     }
@@ -1593,15 +1877,32 @@ Variant method_execute(Method *method, ...)
         //printf("Creating new array of class %s at pc %d in method %s in class %s\n", class->name, frame->pc, method->name, method->class->name);
 
         int count = stack_pop(frame->stack).data.int_val;
-        Array *array = array_new(class, count);
-        stack_push_ref(frame->stack, array);
+        Object **array = arr_init_with_capacity_and_type(sizeof(Object*), count, ARRAY_TYPE_OBJECT, class);
+
+        // FUCK THIS GENUINELY
+        char *fuckfuckfuck;
+        asprintf(&fuckfuckfuck, "[L%s;", class->name);
+        Class *arr_class = classes_get_class(fuckfuckfuck);
+        free(fuckfuckfuck);
+
+        Object *thefuckingobject = object_new(arr_class);
+        thefuckingobject->array = array;
+
+        stack_push_object(frame->stack, thefuckingobject);
 
         DISPATCH();
     }
 
     arraylength: {
-        Array *array = stack_pop(frame->stack).data.ref;
-        stack_push_int(frame->stack, array->count);
+        Variant array_ref = stack_pop(frame->stack);
+        void **array = NULL;
+        if (array_ref.type == VARIANT_TYPE_OBJECT && array_ref.data.object->array)
+            // This is our internal fuckery for encapsulating array inside a Java object, we need to unwrap it before we can get the length
+            array = array_ref.data.object->array;
+        else
+            array = array_ref.data.ref;
+
+        stack_push_int(frame->stack, arr_capacity(array));
 
         DISPATCH();
     }
@@ -1631,10 +1932,10 @@ Variant method_execute(Method *method, ...)
         if (object && object->initialized)
         {
             Class *cast_class = classes_get_class_from_index(pool, index);
-            if (object->class != cast_class && !class_is_subclass(object->class, cast_class))
+            if (object->class != cast_class && !class_is_subclass(object->class, cast_class) && !class_implements_interface(object->class, cast_class))
             {
-                fprintf(stderr, "checkcast failed: object of class %s cannot be cast to %s\n", object->class->name, cast_class->name);
-                exit(1);
+                Object *exception = object_new(classes_get_class("java/lang/ClassCastException"));
+                throw_exception(exception);
             }
         }
 
@@ -1649,7 +1950,9 @@ Variant method_execute(Method *method, ...)
         if (object && object->initialized)
         {
             Class *instanceof_class = classes_get_class_from_index(pool, index);
-            int result = !!(object->class == instanceof_class || class_is_subclass(object->class, instanceof_class));
+            int result = !!(object->class == instanceof_class ||
+                            class_is_subclass(object->class, instanceof_class) ||
+                            class_implements_interface(object->class, instanceof_class));
             stack_push_int(frame->stack, result);
         } else {
             stack_push_int(frame->stack, 0);
@@ -1658,14 +1961,19 @@ Variant method_execute(Method *method, ...)
         DISPATCH();
     }
 
-    // TODO
-    monitorenter:
-        stack_pop(frame->stack);
-        DISPATCH();
+    monitorenter: {
+        Object *object = stack_pop(frame->stack).data.object;
+        pthread_mutex_lock(&object->lock);
 
-    monitorexit:
-        stack_pop(frame->stack);
         DISPATCH();
+    }
+
+    monitorexit: {
+        Object *object = stack_pop(frame->stack).data.object;
+        pthread_mutex_unlock(&object->lock);
+
+        DISPATCH();
+    }
 
     multianewarray: {
         uint16_t index = (data[++frame->pc] << 8) | data[++frame->pc];        
@@ -1675,12 +1983,11 @@ Variant method_execute(Method *method, ...)
         int16_t branch_offset = (data[++frame->pc] << 8) | data[++frame->pc];
         Variant value = stack_pop(frame->stack);
 
-        // HACK: Uninitialized fields do not have any type, fix them eventually
-        //if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT) {
+        if (value.type == VARIANT_TYPE_REF || value.type == VARIANT_TYPE_OBJECT) {
             if (value.data.ref == NULL) {
                 frame->pc += branch_offset - 3;
             }
-        //}
+        }
 
         DISPATCH();
     }
@@ -1782,7 +2089,6 @@ void class_free(Class *class)
 {
     if (!class->built_in) {
         attributes_free(class->attributes);
-        constant_pool_free(class->pool);
         free(class->interfaces);
         free(class->reader);
         free(class->data);
@@ -1790,6 +2096,10 @@ void class_free(Class *class)
 
     fields_free(class->fields);
     methods_free(class->methods, class->methods_count);
+
+    if (!class->built_in)
+        constant_pool_free(class->pool);
+
     free(class);
 }
 
@@ -1837,6 +2147,20 @@ Method *class_get_method(Class *class, const char *name, const char *descriptor)
     return NULL;
 }
 
+Field *class_get_field(Class *class, const char *name)
+{
+    while (class) {
+        for (int i = 0; i < class->fields->fields_count; i++) {
+            Field *f = &class->fields->fields[i];
+            if (!strcmp(name, f->name))
+                return f;
+        }
+        class = class->parent;
+    }
+
+    return NULL;
+}
+
 Field *class_get_static_field(Class *class, const char *name)
 {
     for (int i = 0; i < class->fields->static_fields_count; i++) {
@@ -1871,23 +2195,79 @@ bool class_is_subclass(Class *child, Class *parent)
     return false;
 }
 
+bool class_implements_interface(Class *class, Class *interface)
+{
+    for (int i = 0; i < class->interfaces_count; i++) {
+        if (!strcmp(class->interfaces[i].interface, interface->name))
+            return true;
+    }
+
+    if (class->parent)
+        return class_implements_interface(class->parent, interface);
+
+    return false;
+}
+
 bool classes_add_class(Class *class)
 {
     if (!s_classes || !class)
         return false;
 
     class->classes = s_classes;
-    s_classes->classes = realloc(s_classes->classes, (sizeof(Class*) * (s_classes->count + 1)));
-    s_classes->classes[s_classes->count++] = class;
+    map_set(&s_classes->classes, class->name, class);
+    s_classes->count++;
 
     return true;
 }
 
 static Class *resolve_unknown_class(const char *name)
 {
+    if (name[0] == '[') {
+        // Array class. This is just for reflection/etc, since Java doesn't seem to 
+        // use these beyond reflection
+        Class *array_class = malloc(sizeof(Class));
+        memset(array_class, 0, sizeof(Class));
+
+        char *p = name;
+        while (*p == '[') p++;
+    
+        // why does assigning not work?
+        array_class->name = strdup(name);
+        array_class->built_in = true;
+        array_class->is_array = true;
+        array_class->dimension_count = p - name;
+        array_class->parent = classes_get_class("java/lang/Object");
+
+        if (*p == 'L') {
+            char *component_type_name = strndup(p + 1, strlen(p) - 2);
+            array_class->component_type = classes_get_class(component_type_name);
+            free(component_type_name);
+        } else {
+            // TODO: Implement primitive classes
+        }
+
+        classes_add_class(array_class);
+        return array_class;
+    }
+
+    if (strchr("BCDFIJSZ", name[0])) {
+        // Primitive class. This is just for reflection/etc, since Java doesn't seem to 
+        // use these beyond reflection
+        Class *primitive_class = malloc(sizeof(Class));
+        memset(primitive_class, 0, sizeof(Class));
+
+        primitive_class->name = strdup(name);
+        primitive_class->built_in = true;
+        primitive_class->is_primitive = true;
+        primitive_class->parent = classes_get_class("java/lang/Object");
+
+        classes_add_class(primitive_class);
+        return primitive_class;
+    }
+
     char class_path[2048];
     snprintf(class_path, sizeof(class_path), "%s.class", name);
-    printf("Trying to load class from path %s\n", class_path);
+    //printf("Trying to load class from path %s\n", class_path);
     Class *class = class_parse_file(class_path);
     if (class) {
         if (!classes_add_class(class)) {
@@ -1907,16 +2287,23 @@ Class *classes_get_class(const char *name)
     if (!s_classes || !name)
         return NULL;
 
-    for (int i = 0; i < s_classes->count; i++) {
-        Class *class = s_classes->classes[i];
-        if (!strcmp(class->name, name))
-            return class;
+    if (name[0] == 'L' && name[strlen(name) - 1] == ';') {
+        // Strip the leading 'L' and trailing ';' from the class name
+        char *stripped_name = strndup(name + 1, strlen(name) - 2);
+        Class *class = classes_get_class(stripped_name);
+        free(stripped_name);
+        return class;
     }
 
-    // Try resolving too
-    Class *class = resolve_unknown_class(name);
+    void **class_ptr = map_get(&s_classes->classes, name);
+    if (!class_ptr) {
+        // Try resolving too
+        Class *class = resolve_unknown_class(name);
+        map_set(&s_classes->classes, name, class);
+        return class;
+    }
 
-    return class;
+    return (Class*)*class_ptr;
 }
 
 /* TODO: Fix this method */
@@ -1925,27 +2312,20 @@ Class *classes_get_class_from_index(ConstantPool *pool, uint16_t index)
     const char *name = constant_pool_resolve_class_name(pool, index);
     Class *class = classes_get_class(name);
 
-    if (!class)
-    {
-        class = resolve_unknown_class(name);
-    }
-
     return class;
 }
 
 Method *classes_get_main_method()
 {
-    for (int i = 0; i < s_classes->count; i++) {
-        Class *class = s_classes->classes[i];
-        for (int j = 0; j < class->methods_count; j++) {
-            Method *method = &class->methods[j];
-            if (!strcmp(method->name, "main")) {
-                // We found the main method. Great. Mark this as our main class.
-                printf("Found method main in class %s\n", class->name);
-                s_classes->main_class = class;
-                return &class->methods[j];
-            }
-        }
+    void **class_ptr;
+    map_iter_t iter = map_iter(&s_classes->classes);
+    int count = s_classes->count;
+    while (count--) {
+        class_ptr = map_get(&s_classes->classes, map_next(&s_classes->classes, &iter));
+        Class *class = (Class*)*class_ptr;
+        Method *main_method = class_get_method(class, "main", "([Ljava/lang/String;)V");
+        if (main_method)
+            return main_method;
     }
 
     return NULL;
@@ -1955,15 +2335,21 @@ void classes_new()
 {
     s_classes = malloc(sizeof(Classes));
     s_classes->count = 0;
-    s_classes->classes = NULL;
+    map_init(&s_classes->classes);
 }
 
 void classes_free()
 {
-    for (int i = 0; i < s_classes->count; i++) {
-        Class *class = s_classes->classes[i];
+    void **class_ptr;
+    map_iter_t iter = map_iter(&s_classes->classes);
+    while (s_classes->count--) {
+        const char *key = map_next(&s_classes->classes, &iter);
+        if (!key)
+            break;
+        class_ptr = map_get(&s_classes->classes, key);
+        Class *class = (Class*)*class_ptr;
         class_free(class);
     }
-    free(s_classes->classes);
+    map_deinit(&s_classes->classes);
     free(s_classes);
 }

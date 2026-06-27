@@ -4,7 +4,7 @@
 const char *get_argument_end(const char *argument_start)
 {
     const char *str = argument_start;
-    while (*str != ')' && *str != '\0') {
+    while (*str != ')') {
         str++;
     }
 
@@ -19,7 +19,7 @@ int get_descriptor_count(const char *descriptor)
     if (*descriptor == '(')
         descriptor++;
 
-    while (*descriptor != ')' && *descriptor != '\0') {
+    while (descriptor && *descriptor != ')' && *descriptor != '\0') {
         while (*descriptor == '[')
             descriptor++;
 
@@ -40,6 +40,9 @@ Descriptor parse_descriptor(const char **string, const char *end)
     descriptor.array_dimesions_count = 0;
 
     if (**string == '(')
+        *string = *string + 1;
+
+    if (**string == ')')
         *string = *string + 1;
 
     if (*string == end) {
@@ -67,6 +70,9 @@ Descriptor parse_descriptor(const char **string, const char *end)
         case 'Z':
             descriptor.type = DESCRIPTOR_BOOL;
             break;
+        case 'B':
+            descriptor.type = DESCRIPTOR_BYTE;
+            break;
         case 'J':
             descriptor.type = DESCRIPTOR_LONG;
             break;
@@ -82,7 +88,7 @@ Descriptor parse_descriptor(const char **string, const char *end)
             descriptor.type = DESCRIPTOR_OBJECT;
             descriptor.object_name = strndup(++*string, obj_end - *string);
             /* Skip the entire string */
-            *string = obj_end + 1;
+            *string = obj_end;
             break;
         }
         default: {
@@ -93,7 +99,7 @@ Descriptor parse_descriptor(const char **string, const char *end)
         }
     }
 
-    (void)*string++;
+    *string = *string + 1; // Move past the current character
     return descriptor;
 }
 
